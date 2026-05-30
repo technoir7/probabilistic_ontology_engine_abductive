@@ -15,9 +15,13 @@ direct-structured, semantic, and hybrid assignment backends behind
 `AssignmentRouter`. Structured domains use deterministic/direct assignment by
 default and can reuse old POE deterministic mappers from
 `../probabilistic_ontology_engine/src/domains/`. Semantic LLM scoring is opt-in
-for explicit prose/unstructured evidence. Art-market ingestion marks article
-evidence as prose, so current art behavior continues to route to semantic
-scoring.
+for explicit prose/unstructured evidence. Art-market ingestion with `--domain art`
+marks all article evidence as `prose_text`, routing to semantic scoring.
+
+Semantic scoring optimization is also complete: prompt compaction reduced input
+tokens by ~26% per call (~$0.052 per 70-record run). A shadow prefilter reports
+would-be-skipped pairs (58-64% of semantic pairs) without actually skipping any
+calls. Skipping can be enabled after false-negative validation confirms safety.
 
 ---
 

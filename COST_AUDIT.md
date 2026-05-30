@@ -1,13 +1,61 @@
 # POE-A Cost Optimization Audit
 
-_Generated: 2026-05-30_
+_Updated: 2026-05-30 — reflects deterministic routing correction and prompt compaction_
 
 ## Scope
 
-This audit analyzes the current POE-A pipeline artifacts and code paths without
-implementing optimizations.
+This audit tracks POE-A LLM costs across two states:
+- **Baseline**: before deterministic routing correction (all 70 art records scored by LLM)
+- **Current**: after routing correction + prompt compaction (only explicit prose scores LLM, prompt is 26% smaller)
 
-Current latest-run baseline:
+---
+
+## Current State After Optimizations
+
+### Routing Correction Impact
+
+After the deterministic routing correction and re-ingestion of art evidence with
+`--domain art`:
+
+| Evidence type | Records | LLM calls | Cost |
+|---------------|--------:|----------:|-----:|
+| Art prose (prose_text) | 70 | 70 | ~$0.199 (after compaction) |
+| Old POE structured domains (deterministic) | any | 0 | $0.000 |
+| Direct structured assignments | any | 0 | $0.000 |
+| Unknown structured (no mapper) | any | 0 | $0.000 (errors loudly) |
+
+Key finding: the stored `artifacts/evidence.json` was previously ingested with
+`--domain unknown` (no `evidence_type` metadata). With the deterministic router,
+this caused all 70 art records to route to deterministic, which errored on all 70
+(no mapper for domain `unknown`). **This was a stale artifact bug, not a code
+bug.** Re-ingesting with `--domain art` correctly marks all art evidence as
+`prose_text` and routes it to semantic scoring.
+
+### Prompt Compaction Impact
+
+| Metric | Before | After | Savings |
+|--------|-------:|------:|--------:|
+| System prompt chars | 1,280 | 771 | 509 |
+| Avg user message chars | 5,442 | 4,226 | 1,216 |
+| Tokens per scoring call | ~1,680 | ~1,250 | ~430 |
+| Input tokens for 70 calls | ~117,626 | ~87,526 | ~30,100 |
+| Input cost for 70 calls | ~$0.205 | ~$0.152 | ~$0.052 |
+
+The compaction removed the per-call response schema block (~297 tokens) and
+shortened the system prompt (~133 tokens) while preserving all output schema
+compatibility.
+
+### Shadow Prefilter Potential
+
+Shadow prefilter analysis (live validation, 3-5 prose records):
+- Would skip 58-64% of semantic pairs by lexical prefiltering
+- False negative rate: 0-1 per 3-5 records (requires broader validation)
+- Estimated savings if enabled for 70 records: ~$0.10-0.14
+- Status: shadow mode only (advisory) — actual skipping not yet enabled
+
+---
+
+Baseline (before deterministic routing correction and prompt compaction):
 
 | Metric | Value |
 | --- | ---: |
@@ -208,42 +256,36 @@ non-neutral records, but that has higher quality risk.
 | 8 | Fireworks cached-input / prompt-prefix exploitation | 5-20% of scoring cost if provider caching applies reliably | Medium | Low | The concept block is highly repetitive. Reordering prompts to maximize stable prefix reuse may qualify for cached-input pricing, but provider-side behavior needs verification. |
 | 9 | Pipeline artifact reuse guardrails | Near 100% for accidental reruns | Low | Low | Existing artifact reuse already helps. Add clearer dry-run/cost preview and stricter warnings before `--force` live reruns. Does not reduce first-run cost. |
 
-## 6. Recommendation
+## 6. Completed Optimizations And Remaining Recommendations
 
-Implement first: **sparse concept filtering before scoring**.
+### Completed (2026-05-30)
 
-Justification:
+**Prompt compaction** — implemented:
+- System prompt: 1280 → 771 chars (−509)
+- User message schema block removed: saved ~297 tokens/call
+- Total: ~430 tokens saved/call → ~30,100 tokens / 70 calls → ~$0.052 savings
+- Live validated: compact prompt parses correctly, no schema errors
 
-- Expected savings: highest practical first optimization. The current run spent
-  about `$0.2512` on scoring, and 40 of 70 scorer calls produced all-neutral
-  records. A conservative filter that skips only clear all-neutral candidates
-  could plausibly reduce scoring cost by 40-55%. A stronger concept-pair filter
-  could approach 70%, but should not be the first version.
-- Implementation effort: medium. It can be implemented as a read-only local
-  prefilter before the existing scorer, without changing induction,
-  consolidation, POE adapter behavior, or the scoring schema. The first version
-  can be auditable: record skipped evidence/concept pairs, filter reasons, and
-  fallback thresholds in the run report.
-- Impact on ontology quality: lower risk than switching models first. It keeps
-  the current scoring model for evidence/concept pairs that pass the filter. The
-  main risk is false negatives, so the first version should be conservative and
-  probably run in report-only or shadow mode before enforcing skips.
+**Shadow prefilter** — implemented in shadow mode:
+- `ShadowPrefilter` in `poea.assignments.prefilter`
+- Reports would-be-skipped pairs without actually skipping
+- Live validation: 58-64% skip rate, 0-1 false negatives per 3-5 records
+- Shadow analysis in routing metadata and run reports
 
-Recommended first implementation shape:
+**Cost reporting** — implemented:
+- `fireworks_calls_made`, `fireworks_calls_avoided_by_deterministic`,
+  `fireworks_calls_avoided_by_cache` in routing metadata
+- "Routing And Cost Summary" section in run reports
 
-1. Add a local prefilter that proposes candidate concepts per evidence record
-   using cheap deterministic signals:
-   - concept supporting evidence IDs from induction/registry
-   - lexical overlap between evidence text and concept name/definition
-   - optional domain stopword filtering
-2. Run it in shadow mode for one pipeline run:
-   - do not skip scoring yet
-   - report which assignments would have been skipped
-   - measure false-negative rate against existing scorer outputs
-3. Enable skipping only after the prefilter demonstrates high recall for the 38
-   observed true/false assignments in the current baseline.
+### Remaining: Enable Shadow Prefilter Skipping
 
-Do not implement a cheaper scoring model first. It may save more in raw pricing,
-but it changes the epistemic behavior of the assignment bridge and could degrade
-ontology quality before the system has better scoring diagnostics and regression
-fixtures.
+After broader validation confirms low false-negative rate:
+
+1. Run shadow prefilter on all 70 records with actual scored outputs to measure
+   overall false-negative rate against the 38 observed true/false assignments.
+2. If false-negative rate < 5%, enable actual pair skipping in the router.
+3. Expected additional savings: ~58-64% of scoring pairs → ~$0.10-0.14 per run.
+
+Do not implement a cheaper scoring model without quality validation against
+existing scored evidence baselines. Model switching changes epistemic behavior
+of the assignment bridge.

@@ -17,7 +17,7 @@ from .artifacts.exporters import (
     write_nodes,
 )
 from .artifacts.reports import default_report_artifacts, write_run_report
-from .assignments import AssignmentRouter
+from .assignments import AssignmentRouter, ShadowPrefilter
 from .backends import get_backend
 from .concepts.inducer import ConceptInducer, InductionConfig
 from .concepts.scorer import (
@@ -674,6 +674,7 @@ def pipeline(
             router = AssignmentRouter.default(
                 scorer,
                 soft_observed_threshold=scoring_cfg.soft_observed_threshold,
+                shadow_prefilter=ShadowPrefilter(),
             )
             result = router.score_all(evidence=units, concepts=active_concepts)
             records, stats = result.records, result.stats
@@ -941,6 +942,7 @@ def score_evidence(
     router = AssignmentRouter.default(
         scorer,
         soft_observed_threshold=scoring_cfg.soft_observed_threshold,
+        shadow_prefilter=ShadowPrefilter(),
     )
     try:
         result = router.score_all(

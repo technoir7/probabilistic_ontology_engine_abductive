@@ -67,19 +67,32 @@ The LLM client is provider-agnostic. `FireworksClient` uses Fireworks' OpenAI-co
 endpoint. To use a different OpenAI-compatible provider, subclass or replace `FireworksClient`
 in `src/poea/llm.py`.
 
-LLM scoring is opt-in for semantic evidence, not the default epistemic
-assumption. Structured numeric, API-derived, tabular, or already-assigned
-evidence uses deterministic assignment through `AssignmentRouter` and its direct
-or mapper backends. POE-A reuses old POE deterministic mappers from the sibling
-`../probabilistic_ontology_engine/src/domains/` package where available,
-including macro, natural gas, AI, sovereign debt, credit cycle, energy, labor,
-crypto, geopolitics, and SF urban domains. Prose-heavy evidence, such as
-art-market articles, routes to the semantic scorer only when marked as
-`evidence_type: prose_text` / `unstructured_text` or equivalent.
+**Assignment routing** is deterministic. The default route is deterministic/direct
+assignment — not LLM scoring. LLM scoring is opt-in for explicit prose evidence only.
 
-If structured evidence has no direct assignments and no deterministic mapper can
-be found, POE-A records an explicit assignment error instead of silently calling
-the LLM scorer.
+- `evidence_type: prose_text` / `unstructured_text` → `SemanticLLMScorerBackend` (Fireworks)
+- `evidence_type: structured_numeric` / `tabular` / `api_derived` → `DeterministicMapperBackend` (0 Fireworks calls)
+- `assignment_mode: direct_structured` or pre-existing assignments in metadata → `DirectStructuredAssignmentBackend` (0 Fireworks calls)
+- `evidence_type: mixed` → `HybridPrefilterScorerBackend` (direct where possible, semantic fallback)
+- Unknown structured evidence → explicit routing error, no LLM fallback
+
+Old POE deterministic mappers from the sibling `../probabilistic_ontology_engine/src/domains/`
+are reused via `OldPOEDomainMapperAdapter`. Supported domains: macro-regime-v1,
+natural-gas-v1, ai-regime-v1, sovereign-debt-v1, credit-cycle-v1, energy-regime-v1,
+labor-market-v1, crypto-regime-v1, geopolitics-v1, and sf-urban-v1.
+
+Art-market articles are ingested with `--domain art`, which marks them as `prose_text`
+and preserves semantic scoring for that corpus while keeping structured evidence
+deterministic.
+
+**Semantic prompt compaction** (implemented 2026-05-30) reduced per-call input tokens
+by ~430 tokens (~26% reduction) by removing the redundant per-concept response schema
+from user messages while preserving JSON output schema compatibility.
+
+**Shadow prefilter** runs in read-only mode alongside semantic scoring, reporting which
+evidence/concept pairs would be skipped by a future lexical prefilter without actually
+skipping any scoring calls. Check `assignment_router.shadow_prefilter` in the scored
+evidence metadata for savings estimates.
 
 ## Development
 

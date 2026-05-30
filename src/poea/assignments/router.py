@@ -15,6 +15,7 @@ from ..concepts.scorer import (
 from ..evidence.schemas import EvidenceUnit
 from ..registry.schemas import ConceptEntry
 from .poe_compat import OldPOEMapperError, discover_old_poe_domain_mappers
+from .prefilter import ShadowPrefilter
 
 AssignmentMode = Literal["direct_structured", "deterministic", "semantic", "hybrid"]
 MapperResult = ScoredRecord | Sequence[ConceptAssignment] | Mapping[str, Any]
@@ -255,6 +256,10 @@ class AssignmentRouter:
     uses explicit metadata first, then structural signals. Only explicit
     prose/unstructured evidence routes to semantic scoring; unknown structured
     records use deterministic mapping and fail loudly if no mapper exists.
+
+    An optional ShadowPrefilter runs in shadow mode on semantic routes,
+    reporting which pairs would be skipped by lexical prefiltering without
+    changing any scoring outputs.
     """
 
     def __init__(
@@ -264,6 +269,7 @@ class AssignmentRouter:
         deterministic_backend: DeterministicMapperBackend,
         semantic_backend: SemanticLLMScorerBackend,
         hybrid_backend: HybridPrefilterScorerBackend,
+        shadow_prefilter: ShadowPrefilter | None = None,
     ) -> None:
         self._backends: dict[AssignmentMode, AssignmentBackend] = {
             "direct_structured": direct_backend,
@@ -271,6 +277,7 @@ class AssignmentRouter:
             "semantic": semantic_backend,
             "hybrid": hybrid_backend,
         }
+        self._shadow_prefilter = shadow_prefilter
 
     @classmethod
     def default(
@@ -280,6 +287,7 @@ class AssignmentRouter:
         soft_observed_threshold: float = 0.5,
         deterministic_mappers: Mapping[str, DeterministicMapper] | None = None,
         include_old_poe_mappers: bool = True,
+        shadow_prefilter: ShadowPrefilter | None = None,
     ) -> "AssignmentRouter":
         direct = DirectStructuredAssignmentBackend(
             soft_observed_threshold=soft_observed_threshold
@@ -296,6 +304,7 @@ class AssignmentRouter:
             deterministic_backend=deterministic,
             semantic_backend=semantic,
             hybrid_backend=hybrid,
+            shadow_prefilter=shadow_prefilter,
         )
 
     def decide(self, evidence: EvidenceUnit) -> AssignmentDecision:
@@ -406,10 +415,20 @@ class AssignmentRouter:
         ordered = [result_by_id[unit.evidence_id] for unit in evidence_list]
         mode_counts = Counter(d.mode for d in decisions if d.backend != "cache")
         backend_counts = Counter(d.backend for d in decisions)
-        metadata = {
+
+        llm_calls = mode_counts.get("semantic", 0) + mode_counts.get("hybrid", 0)
+        deterministic_assigned = (
+            mode_counts.get("deterministic", 0)
+            + mode_counts.get("direct_structured", 0)
+            + backend_counts.get("cache", 0)
+        )
+        metadata: dict[str, Any] = {
             "router": "AssignmentRouter",
             "mode_counts": dict(sorted(mode_counts.items())),
             "backend_counts": dict(sorted(backend_counts.items())),
+            "fireworks_calls_made": llm_calls,
+            "fireworks_calls_avoided_by_deterministic": deterministic_assigned,
+            "fireworks_calls_avoided_by_cache": backend_counts.get("cache", 0),
             "decisions": [
                 {
                     "evidence_id": d.evidence_id,
@@ -420,6 +439,31 @@ class AssignmentRouter:
                 for d in decisions
             ],
         }
+
+        # Shadow prefilter: analyze semantic records without skipping any calls
+        if self._shadow_prefilter is not None:
+            semantic_units = routed.get("semantic", [])
+            if semantic_units:
+                shadow = self._shadow_prefilter.analyze(
+                    semantic_units,
+                    concept_list,
+                    actual_records=[result_by_id[u.evidence_id] for u in semantic_units
+                                    if u.evidence_id in result_by_id],
+                )
+                metadata["shadow_prefilter"] = {
+                    "total_pairs": shadow.total_pairs,
+                    "would_skip_pairs": shadow.would_skip_pairs,
+                    "would_skip_records": shadow.would_skip_records,
+                    "skip_rate": round(shadow.skip_rate, 4),
+                    "false_negatives": shadow.false_negatives,
+                    "false_negative_rate": round(shadow.false_negative_rate, 4),
+                    "estimated_token_savings": shadow.estimated_token_savings,
+                    "estimated_cost_savings_usd": round(shadow.estimated_cost_savings_usd, 6),
+                    "top_skipped_concepts": sorted(
+                        shadow.concept_skip_counts.items(), key=lambda x: -x[1]
+                    )[:5],
+                }
+
         return AssignmentResult(records=ordered, stats=stats, metadata=metadata)
 
     def _decision(

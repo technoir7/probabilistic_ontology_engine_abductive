@@ -107,6 +107,7 @@ def write_run_report(
     _append_run_summary(lines, evidence, raw_concepts, registry, canonical, scored, nodes, graph, diagnostics)
     _append_concept_summary(lines, registry, canonical)
     _append_scoring_summary(lines, scored, diagnostics)
+    _append_routing_cost_summary(lines, scored)
     _append_concept_scoring_table(lines, registry, scored, diagnostics)
     _append_sample_scorer_outputs(lines, evidence, scored)
     _append_graph_summary(lines, graph, inferred_backend)
@@ -245,6 +246,68 @@ def _append_scoring_summary(lines: list[str], scored: Any, diagnostics: ScoringD
             lines.append(f"- Assignment router: `{router.get('router', 'unknown')}`")
             lines.append(f"- Assignment mode counts: `{router.get('mode_counts', {})}`")
             lines.append(f"- Assignment backend counts: `{router.get('backend_counts', {})}`")
+    lines.append("")
+
+
+def _append_routing_cost_summary(lines: list[str], scored: Any) -> None:
+    lines.append("## Routing And Cost Summary")
+    lines.append("")
+    if not isinstance(scored, dict):
+        lines.append("- Evidence scoring artifact not present.")
+        lines.append("")
+        return
+
+    metadata = scored.get("metadata", {}) if isinstance(scored, dict) else {}
+    router = metadata.get("assignment_router", {}) if isinstance(metadata, dict) else {}
+    if not isinstance(router, dict):
+        router = {}
+
+    llm_calls = int(router.get("fireworks_calls_made", 0) or 0)
+    avoided_det = int(router.get("fireworks_calls_avoided_by_deterministic", 0) or 0)
+    avoided_cache = int(router.get("fireworks_calls_avoided_by_cache", 0) or 0)
+    total_records = avoided_det + avoided_cache + llm_calls
+
+    lines.append("| Metric | Value |")
+    lines.append("| --- | ---: |")
+    lines.append(f"| Total evidence records routed | {total_records} |")
+    lines.append(f"| Routed to LLM (Fireworks calls made) | {llm_calls} |")
+    lines.append(f"| Avoided by deterministic/direct assignment | {avoided_det} |")
+    lines.append(f"| Avoided by scoring cache | {avoided_cache} |")
+
+    mode_counts = router.get("mode_counts", {})
+    if isinstance(mode_counts, dict):
+        for mode, count in sorted(mode_counts.items()):
+            lines.append(f"| Mode: {mode} | {count} |")
+
+    # Estimate cost: deepseek-v4-pro at $1.74/M input tokens, ~1680 tokens avg per call
+    if llm_calls > 0:
+        est_tokens = llm_calls * 1680
+        est_cost = est_tokens / 1_000_000 * 1.74
+        lines.append(f"| Estimated Fireworks input tokens | ~{est_tokens:,} |")
+        lines.append(f"| Estimated Fireworks input cost | ~${est_cost:.4f} |")
+
+    shadow = router.get("shadow_prefilter", {})
+    if isinstance(shadow, dict) and shadow:
+        lines.append("")
+        lines.append("### Shadow Prefilter Analysis (read-only, no calls skipped)")
+        lines.append("")
+        lines.append("| Metric | Value |")
+        lines.append("| --- | ---: |")
+        lines.append(f"| Total semantic pairs analyzed | {shadow.get('total_pairs', 0)} |")
+        lines.append(f"| Pairs prefilter would skip | {shadow.get('would_skip_pairs', 0)} |")
+        lines.append(f"| Records prefilter would skip entirely | {shadow.get('would_skip_records', 0)} |")
+        lines.append(f"| Skip rate | {shadow.get('skip_rate', 0):.1%} |")
+        lines.append(f"| False negatives (would-skip but actual true/false) | {shadow.get('false_negatives', 0)} |")
+        lines.append(f"| False negative rate | {shadow.get('false_negative_rate', 0):.1%} |")
+        lines.append(f"| Estimated token savings | ~{shadow.get('estimated_token_savings', 0):,} |")
+        lines.append(f"| Estimated cost savings | ~${shadow.get('estimated_cost_savings_usd', 0):.4f} |")
+        top_skipped = shadow.get("top_skipped_concepts", [])
+        if top_skipped:
+            lines.append("")
+            lines.append("Top concepts shadow prefilter would skip most:")
+            for name, count in top_skipped:
+                lines.append(f"- {name}: {count} records")
+
     lines.append("")
 
 

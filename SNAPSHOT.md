@@ -44,9 +44,11 @@ Implemented backends:
 LLM to decide whether to call an LLM.
 
 Default route is deterministic/direct assignment. Semantic LLM scoring is
-opt-in via prose/unstructured evidence type. Current art-market ingestion marks
-article evidence as `prose_text`, preserving Phase 6 behavior and existing
-`scored_evidence.json` compatibility.
+opt-in via prose/unstructured evidence type. Art-market ingestion with
+`--domain art` marks all article evidence as `prose_text`, routing to semantic
+scoring. Evidence ingested with `--domain unknown` only gets `prose_text` when
+body text is present; title-only records fall through to deterministic (which
+errors if no mapper is found).
 
 Old POE deterministic mapper reuse is implemented through
 `OldPOEDomainMapperAdapter`, which lazily calls the sibling POE domain
@@ -59,6 +61,63 @@ Old POE deterministic mapper reuse is implemented through
 If structured evidence lacks direct assignments and no deterministic mapper can
 be found, POE-A emits an explicit routing/error record instead of calling the
 LLM scorer.
+
+---
+
+## Semantic LLM Scoring Optimizations (2026-05-30)
+
+### Prompt Compaction
+
+Scoring prompt compacted by removing the redundant per-call response schema block.
+
+| Metric | Before | After | Savings |
+|--------|-------:|------:|--------:|
+| System prompt | 1280 chars | 771 chars | 509 chars |
+| Avg user message | 5442 chars | 4226 chars | 1216 chars |
+| Tokens per call | ~1680 | ~1250 | ~430 |
+| Tokens for 70 calls | ~117,626 | ~87,526 | ~30,100 |
+| Input cost (70 calls) | ~$0.205 | ~$0.152 | ~$0.052 |
+
+Output schema and JSON parsing are unchanged. Live-validated with compact prompt:
+3 records scored correctly, all 11 assignments per record parsed without errors.
+
+### Shadow Prefilter
+
+`ShadowPrefilter` in `poea.assignments.prefilter` runs in read-only mode
+alongside semantic scoring. Lexical keyword overlap between evidence text and
+concept name/definition identifies pairs the LLM would likely score neutral.
+
+Live validation (3-5 prose records):
+- Would skip: 58-64% of semantic pairs
+- False negatives: 0-1 (pairs it would skip that had actual true/false verdicts)
+- Skipping is NOT yet enabled — prefilter is advisory only in shadow mode
+
+Shadow analysis is exposed in `assignment_router.shadow_prefilter` in scored
+evidence metadata and in run reports under "Routing And Cost Summary".
+
+### Cost Reporting
+
+`AssignmentRouter.score_all` now records in routing metadata:
+- `fireworks_calls_made`: actual LLM calls made
+- `fireworks_calls_avoided_by_deterministic`: records that skipped LLM via routing
+- `fireworks_calls_avoided_by_cache`: records served from existing cache
+- `shadow_prefilter`: full shadow analysis (pairs, skip rate, false negatives, savings)
+
+Run reports include a "Routing And Cost Summary" section.
+
+### Live Validation Results (2026-05-30)
+
+| Metric | Value |
+|--------|------:|
+| Prose records scored (real Fireworks API) | 5 |
+| Fireworks calls made | 5 |
+| Structured records (no Fireworks) | 1 |
+| Fireworks calls for structured | 0 |
+| Compact prompt parse errors | 0 |
+| Cache hits on immediate rerun | 6 |
+| LLM calls on cache rerun | 0 |
+| Shadow prefilter would-skip rate | 58–64% |
+| Shadow prefilter false negatives | 0–1 |
 
 ---
 
@@ -200,8 +259,18 @@ Domain ID used: `poea-induced-v1` (configurable via `configs/induction_config.ya
 ## Test Suite
 
 ```
-256 passed, 1 skipped
+281 passed, 1 skipped
 ```
+
+25 new tests added in `tests/test_semantic_optimization.py` covering:
+- Compact prompt output schema preservation
+- Shadow prefilter shadow-mode behavior (no outputs changed)
+- Cache preventing repeated LLM calls
+- Routing/cost metrics determinism
+- Structured evidence → deterministic (no LLM)
+- Old POE mapper adapter used for structured domains
+- Unknown structured → explicit error without LLM
+- Art prose evidence → semantic routing
 
 Latest verification also passed:
 
