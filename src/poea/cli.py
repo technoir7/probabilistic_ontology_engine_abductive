@@ -10,6 +10,11 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from .artifacts.exporters import (
+    concepts_to_nodes,
+    load_canonical_concepts,
+    write_nodes,
+)
 from .backends import get_backend
 from .concepts.inducer import ConceptInducer, InductionConfig
 from .concepts.scorer import (
@@ -636,3 +641,57 @@ def run_backend(
                     node.get("source", ""),
                 )
             console.print(table)
+
+
+@app.command("export-nodes")
+def export_nodes(
+    concepts: Annotated[
+        Path,
+        typer.Option("--concepts", "-c", help="Path to canonical_concepts.json"),
+    ] = Path("artifacts/canonical_concepts.json"),
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Output nodes.json path"),
+    ] = Path("artifacts/nodes.json"),
+    domain: Annotated[
+        Optional[str],
+        typer.Option("--domain", "-d", help="Domain tag (overrides value from file metadata)"),
+    ] = None,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
+) -> None:
+    """
+    Export active concepts as POE-compatible node objects.
+
+    Reads canonical_concepts.json and writes nodes.json with one node per
+    active concept.  All nodes receive prior_probability=0.5 (maximum
+    uncertainty) and boolean_state=null (unobserved).
+    """
+    if not concepts.exists():
+        err_console.print(f"[red]Canonical concepts file not found: {concepts}[/red]")
+        err_console.print("Run: poea consolidate --concepts artifacts/raw_concepts.json")
+        raise typer.Exit(1)
+
+    active_concepts, file_domain_tag = load_canonical_concepts(concepts)
+
+    if not active_concepts:
+        err_console.print("[red]No active concepts found in concepts file[/red]")
+        raise typer.Exit(1)
+
+    domain_tag = domain if domain is not None else file_domain_tag
+
+    artifact = concepts_to_nodes(active_concepts, domain_tag=domain_tag)
+    write_nodes(output, artifact)
+
+    console.print(f"[green]Exported {artifact['node_count']} node(s) → {output}[/green]")
+    console.print(f"  Domain: {artifact['domain_tag']}")
+
+    if verbose:
+        table = Table("name", "prior_probability", "boolean_state", "source")
+        for node in artifact["nodes"]:
+            table.add_row(
+                node["name"],
+                str(node["prior_probability"]),
+                str(node["boolean_state"]),
+                node["source"],
+            )
+        console.print(table)

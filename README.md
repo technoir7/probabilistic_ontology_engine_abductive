@@ -69,6 +69,7 @@ poea induce           Induce candidate concepts from evidence using an LLM
 poea consolidate      Build concept registry and select active concepts
 poea registry promote Re-apply promotion rules to registry (threshold tuning)
 poea score-evidence   Score evidence against active concepts (Assignment Bridge)
+poea export-nodes     Export active concepts as POE-compatible node objects
 poea run-backend      Run a structure-learning backend (null, poe)
 ```
 
@@ -87,7 +88,7 @@ Evidence Scoring / Assignment Bridge  ✓ Phase 6 complete
     ↓
 Backend Interface + NullBackend       ✓ Phase 7 complete
     ↓
-Concept-to-Node Translation           ← Phase 8, not yet implemented
+Concept-to-Node Translation           ✓ Phase 8 complete
     ↓
 POE Structure Learning                ← Phase 9, not yet implemented
     ↓

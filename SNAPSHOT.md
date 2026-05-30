@@ -15,8 +15,8 @@ _Last updated: 2026-05-30_
 | 4 | Concept Consolidation | Complete |
 | 5 | Active Concept Selection | Complete |
 | 6 | Evidence Scoring (Assignment Bridge) | Complete |
-| 7 | Backend Interface | **Complete** |
-| 8 | Concept-to-Node Translation | Not Started |
+| 7 | Backend Interface | Complete |
+| 8 | Concept-to-Node Translation | **Complete** |
 | 9 | POE Adapter | Not Started |
 | 10 | End-to-End Pipeline Command | Not Started |
 | 11 | Run Reports | Not Started |
@@ -61,6 +61,7 @@ Promotion thresholds: conf ≥ 0.75, evidence ≥ 2, cap 30.
 | `artifacts/raw_concepts.json` | 21 LLM-induced concept proposals (7 batches) |
 | `artifacts/concept_registry.json` | Full registry with all statuses and promotion_events |
 | `artifacts/canonical_concepts.json` | Active concepts only |
+| `artifacts/nodes.json` | POE-compatible node objects (Phase 8 output; gitignored) |
 | `artifacts/scored_evidence.json` | Concept assignments per evidence record (requires live API run; gitignored) |
 | `artifacts/poea_graph.json` | Graph artifact from last `poea run-backend` call (gitignored) |
 
@@ -74,6 +75,7 @@ poea induce                Induce candidate concepts (requires FIREWORKS_API_KEY
 poea consolidate           Build registry and select active concepts
 poea registry promote      Re-apply promotion rules (threshold tuning)
 poea score-evidence        Score evidence against active concepts (requires FIREWORKS_API_KEY)
+poea export-nodes          Export active concepts as POE-compatible node objects
 poea run-backend           Run a structure-learning backend
 ```
 
@@ -93,7 +95,7 @@ Available backends: `null` (trivial graph, Phase 7). The `poe` backend is Phase 
 
 **Why chosen over SQLite:** Introducing SQLite only for Phase 6 would create an inconsistent dual-store architecture. A full migration would require re-implementing Phases 3–5. The JSON approach satisfies all documented exit criteria.
 
-**Future note:** If Phase 9 (POE Adapter) or Phase 11 (Run Reports) reveal query-pattern requirements that JSON cannot satisfy, a migration to SQLite should be considered.
+**Future note:** Phase 9 (POE Adapter) requires careful integration — the adapter must call POE's `stable_variable_id(domain_id, concept_name)` for deterministic UUIDs and translate scored evidence assignments into POE `EvidenceRecord` objects.
 
 ### 2. Fireworks AI instead of Anthropic SDK
 
@@ -101,7 +103,7 @@ Available backends: `null` (trivial graph, Phase 7). The `poe` backend is Phase 
 
 **What was implemented:** Fireworks AI (OpenAI-compatible endpoint), model `deepseek-v4-pro`.
 
-**Why:** Provider decision made during Phase 2. The LLM client is provider-agnostic via the `LLMClient` protocol. Switching providers requires changing `FireworksClient` in `src/poea/llm.py` and the model config.
+**Why:** Provider decision made during Phase 2. The LLM client is provider-agnostic via the `LLMClient` protocol.
 
 ### 3. CLI command structure differs from spec
 
@@ -113,6 +115,7 @@ poea registry list --db ...
 poea registry diff --db ...
 poea registry promote --db ... --auto
 poea score-evidence --db ... --evidence ...
+poea export-nodes --db ... --output ...
 poea run-backend --backend poe --db ... --evidence ...
 ```
 
@@ -121,17 +124,26 @@ poea run-backend --backend poe --db ... --evidence ...
 poea consolidate               (consolidation + promotion in one step)
 poea registry promote          (standalone re-promotion, JSON-based)
 poea score-evidence            (uses --concepts instead of --db)
+poea export-nodes              (uses --concepts instead of --db)
 poea run-backend               (uses --concepts and --scored-evidence instead of --db and --evidence)
 ```
 
 `registry init`, `registry import`, `registry list`, and `registry diff` are not implemented. These are SQLite-oriented commands superseded by the JSON-file workflow.
+
+### 4. Phase 8 node format includes concept_id
+
+**What the spec says:** Node format: `name`, `definition`, `prior_probability`, `boolean_state`, `source`.
+
+**What was implemented:** Node format adds `concept_id` for POE-A internal traceability.
+
+**Why:** Phase 9's POE adapter derives its own UUIDs via `stable_variable_id(domain_id, concept_name)`, so the extra field does not conflict. It enables correlation between nodes and registry entries without re-parsing concept names.
 
 ---
 
 ## Test Suite
 
 ```
-178 passed, 1 failed (pre-existing: openai module not installed), 1 skipped
+204 passed, 1 failed (pre-existing: openai module not installed), 1 skipped
 ```
 
 Pre-existing failure: `test_inducer_retries_on_rate_limit` imports `openai` which is not in the active venv. Not a regression.
