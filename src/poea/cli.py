@@ -546,7 +546,7 @@ def score_evidence(
 def run_backend(
     backend_name: Annotated[
         str,
-        typer.Option("--backend", "-b", help="Backend name (e.g. 'null')"),
+        typer.Option("--backend", "-b", help="Backend name: 'null' or 'poe'"),
     ] = "null",
     concepts: Annotated[
         Path,
@@ -564,12 +564,20 @@ def run_backend(
         Path,
         typer.Option("--output", "-o", help="Output graph artifact path"),
     ] = Path("artifacts/poea_graph.json"),
+    domain_id: Annotated[
+        Optional[str],
+        typer.Option("--domain-id", help="Domain ID for POE backend (default: poea-induced-v1)"),
+    ] = None,
+    config_path: Annotated[
+        Optional[Path],
+        typer.Option("--config", help="Config YAML path"),
+    ] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
 ) -> None:
     """
     Run a structure-learning backend against active concepts and scored evidence.
 
-    Available backends: null (Phase 7).  The 'poe' backend is added in Phase 9.
+    Available backends: null (trivial graph), poe (Probabilistic Ontology Engine).
     """
     if verbose:
         logging.getLogger().setLevel(logging.INFO)
@@ -603,9 +611,19 @@ def run_backend(
         console.print("[yellow]No scored evidence provided — running backend with empty evidence[/yellow]")
 
     # Resolve and invoke backend
+    # Read domain_id from config if not provided via flag
+    if domain_id is None:
+        cfg_path = config_path or Path("configs/induction_config.yaml")
+        raw_cfg = _load_config(cfg_path)
+        domain_id = raw_cfg.get("backend", {}).get("domain_id", "poea-induced-v1")
+
+    backend_kwargs: dict = {}
+    if backend_name == "poe":
+        backend_kwargs["domain_id"] = domain_id
+
     try:
-        backend = get_backend(backend_name)
-    except ValueError as exc:
+        backend = get_backend(backend_name, **backend_kwargs)
+    except (ValueError, ImportError) as exc:
         err_console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1)
 

@@ -199,10 +199,11 @@ def test_get_backend_unknown_error_mentions_available():
         get_backend("bogus")
 
 
-def test_get_backend_poe_not_yet_available():
-    """POE backend is Phase 9 — must not be available in Phase 7."""
-    with pytest.raises(ValueError):
-        get_backend("poe")
+def test_get_backend_poe_is_now_available():
+    """POE backend is registered after Phase 9 — get_backend('poe') must succeed."""
+    from poea.backends.poe_backend import POEBackend
+    backend = get_backend("poe")
+    assert isinstance(backend, POEBackend)
 
 
 # ---------------------------------------------------------------------------

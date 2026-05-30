@@ -27,6 +27,7 @@ registry:
 backend:
   default: null
   poe_path: ../probabilistic_ontology_engine
+  domain_id: poea-induced-v1   # stable domain ID for POE variable UUID derivation
 
 validation:
   latent_alignment_threshold: 0.3

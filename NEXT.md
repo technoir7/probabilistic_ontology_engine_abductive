@@ -1,149 +1,115 @@
-# Next: Phase 9 — POE Adapter
+# Next: Phase 10 — End-to-End Pipeline Command
 
 ---
 
 ## Objective
 
-Connect POE-A to the existing POE structure learner.
+Create one command that runs the complete POE-A pipeline from raw evidence to
+an ontology graph, without requiring any intermediate manual steps.
 
-The POE adapter is the bridge between POE-A's abductively-induced concepts
-and POE's probabilistic graph learning engine. It translates:
-- Induced concept nodes → POE `Variable` objects
-- Scored evidence assignments → POE `EvidenceRecord` objects
-- Then calls `engine.learn()` and returns a graph artifact.
+The pipeline command is the first demonstration of MVP-0 (Vocabulary-Free
+Ontology Construction). It wires together every completed phase.
 
 ---
 
-## Inputs Required
+## Prerequisite: MVP-0 Acceptance Test
 
-| Input | Location | Status |
-|-------|----------|--------|
-| Active concept nodes | `artifacts/nodes.json` | Ready (Phase 8) |
-| Scored evidence | `artifacts/scored_evidence.json` | Ready after live run (Phase 6) |
-| POE package | `../probabilistic_ontology_engine` | **Requires installation** |
-| Backend interface | `src/poea/backends/interface.py` | Ready (Phase 7) |
-
----
-
-## Pre-condition: POE Installation
-
-Phase 9 requires POE to be installed as a local editable package:
+MVP-0 succeeds when this command runs to completion:
 
 ```bash
-pip install -e ../probabilistic_ontology_engine
-```
-
-This does not clone POE into POE-A. It simply allows POE-A to call POE as a local package.
-
-No POE code should be copied into POE-A.
-
----
-
-## What Phase 9 Must Produce
-
-### Adapter file — `src/poea/backends/poe_backend.py`
-
-The `POEBackend` class implementing `StructureLearningBackend`.
-
-### Responsibilities (from IMPLEMENTATION_PLAN.md)
-
-1. Build `Variable` objects from active concepts using:
-   ```python
-   from engine.variable_identity import stable_variable_id
-   variable_id = stable_variable_id(domain_id, concept_name)
-   ```
-   **Never use `uuid4()` for variable UUIDs.** Random UUIDs break POE's historical evidence matching on restart.
-
-2. Build a seed `OntologyCandidate` with co-occurrence-seeded edges:
-   - Only seed edges where both concepts appeared in the same evidence record
-   - Not all-pairs
-
-3. Construct a dynamic domain module wrapping the induced variables and candidate.
-
-4. Translate scored evidence assignments into POE `EvidenceRecord` objects with `ObservedAssignment` entries keyed to stable variable UUIDs.
-
-5. Register and activate the dynamic domain module with POE.
-
-6. Call `engine.learn()` and return a graph artifact.
-
-### Anti-goals
-
-Do not:
-- Copy POE code into POE-A
-- Fork POE inside POE-A
-- Import POE internals beyond: `engine.engine`, `engine.schemas`, `engine.variable_identity`
-- Modify POE during this phase
-- Make POE-A dependent on art-domain specifics
-
-### CLI integration
-
-Register `poe` in the backend factory and update `poea run-backend`:
-
-```bash
-poea run-backend \
+poea pipeline \
+  --domain art \
+  --input ../art-market-domain/data/manual_ingest_split \
   --backend poe \
-  --concepts artifacts/canonical_concepts.json \
-  --scored-evidence artifacts/scored_evidence.json \
   --output artifacts/poea_graph.json
 ```
 
----
-
-## Exit Criteria (from IMPLEMENTATION_PLAN.md Phase 9)
-
-POE-A runs end-to-end:
-
-```
-Evidence
-    ↓
-Concept Discovery
-    ↓
-Concept Registry
-    ↓
-Evidence Scoring (Assignment Bridge)
-    ↓
-POE Adapter
-    ↓
-Ontology Graph
-```
-
-without a manually specified variable list.
-
-**This is the first major project victory (MVP-0 prerequisite).**
+and produces all required artifacts using zero manually specified art ontology
+variables.
 
 ---
 
-## Implementation Notes
+## What Phase 10 Must Produce
 
-### Variable UUID stability
+### CLI command
 
-From IMPLEMENTATION_PLAN.md:
-> Variable UUIDs must be derived deterministically from concept names.
-> Use `stable_variable_id(domain_id, concept_name)`.
-> Never use `uuid4()` for variable UUIDs. Random UUIDs break POE's historical evidence matching on restart.
+```bash
+poea pipeline \
+  --domain art \
+  --input ../art-market-domain/data/manual_ingest_split \
+  --registry artifacts/poea_registry.sqlite \
+  --backend poe \
+  --output artifacts/poea_graph.json
+```
 
-### Co-occurrence edge seeding
+(Note: `--registry` becomes `--concepts` or `--output-dir` in the JSON architecture.)
 
-Seed only edges where both concepts appeared in the same evidence record:
-- Iterate over scored_evidence records
-- For each record, collect concepts with `assigned_value=True`
-- For each pair of co-occurring True concepts, add a candidate edge
+### Pipeline steps (from IMPLEMENTATION_PLAN.md Phase 10)
 
-This produces a sparse seed graph rather than an all-pairs dense graph.
+1. Load evidence (text only; discard pre-annotations)
+2. Induce concepts
+3. Import concepts into registry
+4. Consolidate concepts
+5. Promote active concepts
+6. Score evidence against active concepts
+7. Export nodes
+8. Run backend
+9. Save graph artifact
+10. Generate run report
 
-### Missingness translation
+### Required artifacts
 
-| POE-A missingness | POE assignment type |
-|-------------------|---------------------|
-| `OBSERVED` | `ObservedAssignment` |
-| `SOFT_OBSERVED` | `ObservedAssignment` (with reduced weight if POE supports it) |
-| `MISSING` | omit from evidence record (treated as missing data) |
+```
+artifacts/evidence.json
+artifacts/raw_concepts.json
+artifacts/poea_registry.sqlite  → artifacts/concept_registry.json (JSON arch)
+artifacts/nodes.json
+artifacts/poea_graph.json
+artifacts/run_report.md
+```
 
-### Dependency boundary
+---
 
-POE-A may import from:
-- `engine.engine` — the main POE engine
-- `engine.schemas` — Variable, OntologyCandidate, EvidenceRecord, ObservedAssignment
-- `engine.variable_identity` — stable_variable_id
+## Implementation Tasks
 
-POE-A must not import from POE's domain modules or internal implementation details.
+1. Add `poea pipeline` command to `cli.py`
+2. Wire all existing phase commands into a single callable sequence
+3. Handle partial runs (skip stages where artifacts already exist unless `--force`)
+4. Generate `artifacts/run_report.md` summarizing the pipeline run
+
+---
+
+## Design Notes
+
+### Concept induction requires live LLM
+
+`poea induce` calls the LLM. The pipeline command should:
+- Skip induction if `raw_concepts.json` already exists (use `--force` to re-run)
+- Skip scoring if `scored_evidence.json` already exists (use `--force` to re-score)
+
+This allows the pipeline to be re-run cheaply after concept registry changes.
+
+### Null backend for testing
+
+The pipeline should work with `--backend null` so the full pipeline can be tested
+without POE installation (and without live scored evidence for the null backend path).
+
+### Run report
+
+The run report must include (per IMPLEMENTATION_PLAN.md Phase 11 preview):
+- Evidence records loaded
+- Concepts proposed
+- Concepts merged / active / suppressed
+- Evidence scoring summary (if scoring ran)
+- Backend used
+- Graph summary (nodes, edges)
+- Warnings
+- Timestamps
+
+---
+
+## Exit Criteria (from IMPLEMENTATION_PLAN.md Phase 10)
+
+One command produces a graph from raw evidence without hand-authored variables.
+
+All required artifacts are present after the command completes.
