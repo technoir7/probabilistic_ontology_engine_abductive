@@ -8,6 +8,7 @@ from .poe_compat import (
     translate_old_poe_evidence_record,
 )
 from .prefilter import ShadowPrefilter, ShadowPrefilterAnalysis
+from .prefilter_eval import EvaluationResult, PrefilterEvaluator, ThresholdResult
 from .router import (
     AssignmentBackend,
     AssignmentResult,
@@ -24,13 +25,16 @@ __all__ = [
     "AssignmentRouter",
     "DeterministicMapperBackend",
     "DirectStructuredAssignmentBackend",
+    "EvaluationResult",
     "HybridPrefilterScorerBackend",
-    "SemanticLLMScorerBackend",
     "OldPOEDomainMapperAdapter",
     "OldPOEDomainMapperSpec",
     "OldPOEMapperError",
+    "PrefilterEvaluator",
+    "SemanticLLMScorerBackend",
     "ShadowPrefilter",
     "ShadowPrefilterAnalysis",
+    "ThresholdResult",
     "discover_old_poe_domain_mappers",
     "translate_old_poe_evidence_record",
 ]
