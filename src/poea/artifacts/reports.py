@@ -240,6 +240,11 @@ def _append_scoring_summary(lines: list[str], scored: Any, diagnostics: ScoringD
         lines.append(f"- Scoring model: `{metadata.get('model', 'unknown')}`")
         lines.append(f"- Scored at: `{metadata.get('scored_at', 'unknown')}`")
         lines.append(f"- Soft observed threshold: `{metadata.get('soft_observed_threshold', 'unknown')}`")
+        router = metadata.get("assignment_router", {})
+        if isinstance(router, dict) and router:
+            lines.append(f"- Assignment router: `{router.get('router', 'unknown')}`")
+            lines.append(f"- Assignment mode counts: `{router.get('mode_counts', {})}`")
+            lines.append(f"- Assignment backend counts: `{router.get('backend_counts', {})}`")
     lines.append("")
 
 

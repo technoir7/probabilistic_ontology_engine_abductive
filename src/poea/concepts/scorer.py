@@ -2,8 +2,9 @@
 Evidence Scoring (Assignment Bridge) — Phase 6.
 
 Translates normalized evidence records into concept-keyed boolean assignments.
-For each evidence record, all active concepts are batched into a single LLM
-call to minimise API cost.
+For each prose-heavy evidence record, all active concepts are batched into a
+single LLM call. Structured assignment routing lives in ``poea.assignments`` and
+should be preferred when evidence already has deterministic observations.
 
 Verdict mapping:
     supports_true  → assigned_value=True,  missingness=OBSERVED

@@ -45,7 +45,8 @@ poea consolidate --concepts artifacts/raw_concepts.json --output-dir artifacts
 # Re-apply promotion with adjusted thresholds (no re-induction needed)
 poea registry promote --include-suppressed --confidence 0.65 --auto
 
-# Score evidence against active concepts (Assignment Bridge)
+# Assign evidence against active concepts.
+# Structured evidence routes through deterministic/direct assignment; prose routes through the LLM scorer.
 poea score-evidence --concepts artifacts/canonical_concepts.json --evidence artifacts/evidence.json --output artifacts/scored_evidence.json --verbose
 
 # Export nodes and run a backend manually
@@ -65,6 +66,12 @@ Required env var: `FIREWORKS_API_KEY`
 The LLM client is provider-agnostic. `FireworksClient` uses Fireworks' OpenAI-compatible
 endpoint. To use a different OpenAI-compatible provider, subclass or replace `FireworksClient`
 in `src/poea/llm.py`.
+
+LLM scoring is the semantic fallback, not the default epistemic assumption.
+Structured numeric, API-derived, tabular, or already-assigned evidence should
+use deterministic assignment through `AssignmentRouter` and its direct or mapper
+backends. Prose-heavy evidence, such as art-market articles, still routes to the
+semantic scorer because it requires interpretation.
 
 ## Development
 
@@ -96,7 +103,7 @@ poea ingest           Load and normalize evidence records
 poea induce           Induce candidate concepts from evidence using an LLM
 poea consolidate      Build concept registry and select active concepts
 poea registry promote Re-apply promotion rules to registry (threshold tuning)
-poea score-evidence   Score evidence against active concepts (Assignment Bridge)
+poea score-evidence   Assign evidence against active concepts via deterministic/semantic routing
 poea export-nodes     Export active concepts as POE-compatible node objects
 poea run-backend      Run a structure-learning backend (--backend null|poe)
 poea pipeline         Run evidence → concepts → registry → scoring → backend → report
@@ -113,6 +120,8 @@ Concept Induction (LLM, domain-agnostic prompt)
 Concept Consolidation + Registry
     ↓
 Active Concept Selection (configurable thresholds, hard cap)
+    ↓
+Assignment Router                     ✓ deterministic/direct/semantic modes
     ↓
 Evidence Scoring / Assignment Bridge  ✓ Phase 6 complete
     ↓

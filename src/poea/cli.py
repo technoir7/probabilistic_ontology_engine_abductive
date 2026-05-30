@@ -17,6 +17,7 @@ from .artifacts.exporters import (
     write_nodes,
 )
 from .artifacts.reports import default_report_artifacts, write_run_report
+from .assignments import AssignmentRouter
 from .backends import get_backend
 from .concepts.inducer import ConceptInducer, InductionConfig
 from .concepts.scorer import (
@@ -651,7 +652,7 @@ def pipeline(
             }
         )
 
-    # 6. Score evidence against active concepts.
+    # 6. Route evidence through deterministic/direct/semantic assignment backends.
     scored_path = artifacts["scored_evidence"]
     scored_records_for_backend: list[dict[str, Any]] = []
     if force or not scored_path.exists():
@@ -670,7 +671,12 @@ def pipeline(
             active_concepts = _load_active_concepts(canonical_path)
             scoring_cfg = ScoringConfig.from_dict(raw_config)
             scorer = EvidenceScorer(config=scoring_cfg)
-            records, stats = scorer.score_all(evidence=units, concepts=active_concepts)
+            router = AssignmentRouter.default(
+                scorer,
+                soft_observed_threshold=scoring_cfg.soft_observed_threshold,
+            )
+            result = router.score_all(evidence=units, concepts=active_concepts)
+            records, stats = result.records, result.stats
             metadata = {
                 "canonical_concepts_source": str(canonical_path),
                 "evidence_source": str(evidence_path),
@@ -679,6 +685,7 @@ def pipeline(
                 "model": scoring_cfg.model,
                 "soft_observed_threshold": scoring_cfg.soft_observed_threshold,
                 "scored_at": datetime.now(timezone.utc).isoformat(),
+                "assignment_router": result.metadata,
             }
             save_scored_evidence(scored_path, records, stats, metadata)
             scored_records_for_backend = [r.model_dump() for r in records]
@@ -875,9 +882,11 @@ def score_evidence(
     """
     Score evidence records against active concepts (Assignment Bridge).
 
-    For each evidence record, calls the LLM once with all active concepts
-    batched together.  Results are cached in scored_evidence.json; re-runs
-    only score new (evidence_id, concept_id) pairs.
+    The deterministic assignment router prefers direct structured assignments
+    and registered deterministic mappers when evidence metadata supports them.
+    Prose-heavy evidence routes to the existing semantic LLM scorer. Results
+    are cached in scored_evidence.json; re-runs only score records not already
+    covered by cache.
     """
     if verbose:
         logging.getLogger().setLevel(logging.INFO)
@@ -924,17 +933,22 @@ def score_evidence(
         console.print(f"[dim]Loaded {len(existing)} cached record(s) from {output}[/dim]")
 
     console.print(
-        f"Scoring {len(evidence_units)} evidence records × {len(active_concepts)} concepts "
-        f"using {scoring_cfg.model}"
+        f"Assigning {len(evidence_units)} evidence records × {len(active_concepts)} concepts "
+        f"(semantic fallback model: {scoring_cfg.model})"
     )
 
     scorer = EvidenceScorer(config=scoring_cfg)
+    router = AssignmentRouter.default(
+        scorer,
+        soft_observed_threshold=scoring_cfg.soft_observed_threshold,
+    )
     try:
-        records, stats = scorer.score_all(
+        result = router.score_all(
             evidence=evidence_units,
             concepts=active_concepts,
             existing_records=existing if existing else None,
         )
+        records, stats = result.records, result.stats
     except Exception as exc:
         err_console.print(f"[red]Scoring failed: {exc}[/red]")
         raise typer.Exit(1)
@@ -949,6 +963,7 @@ def score_evidence(
         "model": scoring_cfg.model,
         "soft_observed_threshold": scoring_cfg.soft_observed_threshold,
         "scored_at": datetime.now(timezone.utc).isoformat(),
+        "assignment_router": result.metadata,
     }
 
     save_scored_evidence(output, records, stats, metadata)
@@ -958,6 +973,9 @@ def score_evidence(
     console.print(f"  Scored (LLM):   {stats.scored}")
     console.print(f"  Cache hits:     {stats.cache_hits}")
     console.print(f"  Errors:         {stats.errors}")
+    router_meta = metadata.get("assignment_router", {})
+    if router_meta:
+        console.print(f"  Assignment modes: {router_meta.get('mode_counts', {})}")
     if stats.errors:
         console.print(f"  [yellow]Warning: {stats.errors} record(s) failed scoring — assigned neutral[/yellow]")
     console.print(f"\n  → {output}")

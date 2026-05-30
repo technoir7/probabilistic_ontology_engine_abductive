@@ -577,7 +577,7 @@ CREATE TABLE node_registry (
 
 ---
 
-# Stage 6: Evidence Scoring (Assignment Bridge)
+# Stage 6: Assignment Routing And Evidence Scoring
 
 This stage is the critical link between the concept registry and structure learning.
 
@@ -585,7 +585,19 @@ This stage is the critical link between the concept registry and structure learn
 
 Structure-learning backends (including POE) require evidence to be expressed as assignments of observed values to specific variables. They do not accept raw text.
 
-The evidence scoring stage translates each evidence record into a set of concept-keyed boolean assignments by asking: does this evidence document support this concept being True or False?
+The assignment stage translates each evidence record into a set of concept-keyed boolean assignments. It supports two broad modes:
+
+* deterministic assignment for structured numeric, API-derived, tabular, rule-mapped, or already-assigned evidence
+* semantic assignment for prose-heavy evidence that requires interpretation
+
+Architectural rule:
+
+```text
+Use an LLM because the evidence requires semantic interpretation,
+not because an LLM is available.
+```
+
+The router itself is deterministic. POE-A must not use an LLM to decide whether to use an LLM.
 
 ## Inputs
 
@@ -594,15 +606,31 @@ The evidence scoring stage translates each evidence record into a set of concept
 
 ## Method
 
-For each (evidence record, active concept) pair:
+`AssignmentRouter` chooses an assignment backend from evidence metadata and structure:
 
-* Call LLM with the concept definition and the evidence text
-* Receive: `supports_true`, `supports_false`, or `neutral`
-* Map `neutral` to the missing-data missingness type used by the downstream backend
+* `DirectStructuredAssignmentBackend` maps existing structured assignments into scored records with no LLM call.
+* `DeterministicMapperBackend` runs registered domain mappers or rule assignment maps with no LLM call. This is the POE-A analogue of old POE DomainModule evidence mappers.
+* `SemanticLLMScorerBackend` wraps the existing LLM scorer for prose text.
+* `HybridPrefilterScorerBackend` conservatively handles mixed evidence by using direct assignments when present and semantic fallback otherwise.
 
-Scoring calls should be batched: score all active concepts for a single evidence record in one LLM call to reduce API cost.
+Routing rules are deterministic:
 
-Results are cached in the registry (`concept_evidence_links`) so they are not recomputed on re-runs.
+* `assignment_mode: direct_structured` or structured assignment metadata -> direct structured assignment
+* `assignment_mode: deterministic`, `evidence_type: structured_numeric`, `evidence_type: tabular`, or numeric observation metadata -> deterministic mapper
+* `evidence_type: structured_json_with_assignments` -> direct structured assignment
+* `evidence_type: prose_text` -> semantic scorer
+* `evidence_type: mixed` -> hybrid scorer
+* otherwise -> semantic scorer, preserving current art-market behavior
+
+The default evidence normalizer still excludes top-level `assignments` and
+`causal_claims` from induction text to prevent vocabulary leakage. Direct
+structured assignment is intended for controlled normalized evidence artifacts
+or metadata fields such as `structured_assignments`, `concept_assignments`,
+`deterministic_assignments`, or registered domain mapper outputs.
+
+When semantic scoring is selected, the LLM scorer evaluates all active concepts for a single evidence record in one call to reduce API cost.
+
+Results are cached in `scored_evidence.json` so they are not recomputed on re-runs.
 
 ## Output
 
@@ -630,6 +658,8 @@ Low-confidence assignments use `missingness: "SOFT_OBSERVED"`.
 ## Critical Note
 
 The evidence scorer is an interpretation layer. Its output is the data that structure learning trains on. Systematically biased scoring will produce a biased graph regardless of concept quality. Scorer output must be exposed in run reports and be auditable.
+
+LLM scorer output is only one assignment source. For structured domains, deterministic mappers are usually preferable because they are cheaper, repeatable, and closer to the original POE DomainModule contract.
 
 ---
 
@@ -759,6 +789,7 @@ The project fails if:
 * variable_inducer.py
 * consolidation.py
 * scorer.py           ← evidence-to-assignment bridge
+* assignments/router.py ← deterministic assignment routing layer
 * cross_validator.py  (post-MVP)
 * latent_extractor.py (post-MVP)
 * node_registry.py

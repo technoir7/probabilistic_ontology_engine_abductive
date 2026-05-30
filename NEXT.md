@@ -10,6 +10,12 @@ Phase 11 is complete: `poea report --run latest` regenerates
 `artifacts/run_report.md` from existing artifacts without live API calls or
 pipeline re-execution.
 
+Assignment architecture correction is complete: POE-A now has deterministic,
+direct-structured, semantic, and hybrid assignment backends behind
+`AssignmentRouter`. Structured domains can avoid LLM scoring when assignments
+or deterministic mappers are available. Art-market prose evidence continues to
+route to semantic scoring.
+
 ---
 
 ## Current Baseline
@@ -30,6 +36,10 @@ Latest POE-A run artifacts report:
 
 The high neutral rate and POE-learning omission count should be treated as
 diagnostics when comparing against POE v1.
+
+The comparison should distinguish assignment mode effects where possible:
+deterministically assigned structured evidence is expected to have different
+missingness and neutral-rate behavior from prose evidence scored semantically.
 
 ---
 

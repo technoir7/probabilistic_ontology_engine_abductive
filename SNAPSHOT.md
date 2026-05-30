@@ -25,6 +25,29 @@ _Last updated: 2026-05-30_
 
 ---
 
+## Assignment Layer
+
+POE-A now routes evidence through a deterministic assignment layer before using
+semantic LLM scoring.
+
+Implemented backends:
+
+| Backend | Use case | LLM calls |
+|---------|----------|----------:|
+| `DirectStructuredAssignmentBackend` | evidence metadata already contains concept assignments | 0 |
+| `DeterministicMapperBackend` | structured numeric/API/tabular evidence with a registered mapper or rule assignments | 0 |
+| `SemanticLLMScorerBackend` | prose-heavy evidence requiring interpretation | yes |
+| `HybridPrefilterScorerBackend` | mixed evidence; direct where possible, semantic fallback otherwise | conditional |
+
+`AssignmentRouter` is deterministic. It routes from explicit
+`assignment_mode`, `evidence_type`, and structured metadata. It does not use an
+LLM to decide whether to call an LLM.
+
+Current art-market prose evidence still routes to semantic scoring by default,
+preserving Phase 6 behavior and existing `scored_evidence.json` compatibility.
+
+---
+
 ## Current Art Domain Registry
 
 Induction run on art-market-domain evidence.
@@ -91,7 +114,7 @@ poea ingest                Load and normalize evidence records
 poea induce                Induce candidate concepts (requires FIREWORKS_API_KEY)
 poea consolidate           Build registry and select active concepts
 poea registry promote      Re-apply promotion rules (threshold tuning)
-poea score-evidence        Score evidence against active concepts (requires FIREWORKS_API_KEY)
+poea score-evidence        Assign evidence against active concepts (deterministic/direct/semantic routing)
 poea export-nodes          Export active concepts as POE-compatible node objects
 poea run-backend           Run a structure-learning backend (--backend null|poe)
 poea pipeline              Run the full evidence-to-graph pipeline
@@ -134,6 +157,15 @@ The spec uses SQLite-oriented `--db` flags. The implementation uses JSON-oriente
 
 Node format adds `concept_id` beyond the spec's documented fields for POE-A internal traceability. Harmless for POE (it derives its own UUIDs via `stable_variable_id`).
 
+### 6. Assignment router added before comparative mode
+
+The roadmap's next documented phase remains Phase 12, but the cost audit and
+POE architecture review identified a missing assignment abstraction: LLM scoring
+should not be the default for structured evidence. This change is an
+architecture correction to Phase 6 rather than a new roadmap phase. It preserves
+current art-market behavior while adding deterministic/direct assignment paths
+for future structured-domain runs.
+
 ---
 
 ## POE Dependency
@@ -154,7 +186,7 @@ Domain ID used: `poea-induced-v1` (configurable via `configs/induction_config.ya
 ## Test Suite
 
 ```
-247 passed, 1 skipped
+252 passed, 1 skipped
 ```
 
 Latest verification also passed:
