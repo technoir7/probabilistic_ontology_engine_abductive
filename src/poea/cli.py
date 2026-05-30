@@ -16,7 +16,7 @@ from .artifacts.exporters import (
     load_canonical_concepts,
     write_nodes,
 )
-from .artifacts.reports import write_run_report
+from .artifacts.reports import default_report_artifacts, write_run_report
 from .backends import get_backend
 from .concepts.inducer import ConceptInducer, InductionConfig
 from .concepts.scorer import (
@@ -781,6 +781,71 @@ def pipeline(
     console.print("\n[bold green]Pipeline complete[/bold green]")
     console.print(f"  Graph:      {output}")
     console.print(f"  Run report: {report_path}")
+
+
+@app.command("report")
+def report(
+    run: Annotated[
+        str,
+        typer.Option("--run", help="Run selector. Only 'latest' is currently supported."),
+    ] = "latest",
+    output_dir: Annotated[
+        Path,
+        typer.Option("--output-dir", help="Directory containing latest pipeline artifacts"),
+    ] = Path("artifacts"),
+    output: Annotated[
+        Optional[Path],
+        typer.Option("--output", "-o", help="Output report path"),
+    ] = None,
+    graph: Annotated[
+        Optional[Path],
+        typer.Option("--graph", help="Graph artifact path"),
+    ] = None,
+    config_path: Annotated[
+        Optional[Path],
+        typer.Option("--config", "-c", help="Config YAML path"),
+    ] = None,
+    domain: Annotated[
+        Optional[str],
+        typer.Option("--domain", "-d", help="Domain label override"),
+    ] = None,
+    backend_name: Annotated[
+        Optional[str],
+        typer.Option("--backend", "-b", help="Backend label override"),
+    ] = None,
+) -> None:
+    """
+    Regenerate a read-only run report from existing artifacts.
+
+    This command does not run induction, scoring, consolidation, node export,
+    or backend learning.  It only inspects artifact files and rewrites the
+    Markdown report.
+    """
+    if run != "latest":
+        err_console.print("[red]Only --run latest is currently supported[/red]")
+        raise typer.Exit(1)
+
+    cfg_path = config_path or Path("configs/induction_config.yaml")
+    raw_config = _load_config(cfg_path)
+    report_path = output or (output_dir / "run_report.md")
+    graph_path = graph or (output_dir / "poea_graph.json")
+    artifacts = default_report_artifacts(
+        output_dir,
+        graph_path=graph_path,
+        report_path=report_path,
+    )
+
+    write_run_report(
+        report_path,
+        domain=domain or "unknown",
+        backend=backend_name or "unknown",
+        artifacts=artifacts,
+        stages=[],
+        warnings=[],
+        config=raw_config,
+    )
+
+    console.print(f"[green]Run report regenerated -> {report_path}[/green]")
 
 
 @app.command("score-evidence")

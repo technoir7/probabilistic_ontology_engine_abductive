@@ -19,7 +19,7 @@ _Last updated: 2026-05-30_
 | 8 | Concept-to-Node Translation | Complete |
 | 9 | POE Adapter | Complete |
 | 10 | End-to-End Pipeline Command | **Complete** |
-| 11 | Run Reports | Not Started |
+| 11 | Run Reports | **Complete** |
 | 12 | Comparative Mode | Not Started |
 | 13+ | Post-MVP phases | Not Started |
 
@@ -64,7 +64,7 @@ Promotion thresholds: conf ≥ 0.75, evidence ≥ 2, cap 30.
 | `artifacts/nodes.json` | POE-compatible node objects (Phase 8 output; gitignored) |
 | `artifacts/scored_evidence.json` | Concept assignments per evidence record (requires live API; gitignored) |
 | `artifacts/poea_graph.json` | Graph artifact from last `poea pipeline --backend poe` run (gitignored) |
-| `artifacts/run_report.md` | Phase 10 pipeline run report (gitignored) |
+| `artifacts/run_report.md` | Phase 11 regenerated run report with scoring diagnostics, warnings, samples, backend summary, and artifact timestamps (gitignored) |
 
 Latest Phase 10 POE pipeline run:
 
@@ -77,6 +77,10 @@ Latest Phase 10 POE pipeline run:
 | scoring errors | 0 |
 | graph nodes | 11 |
 | graph edges | 1 |
+| records included in POE learning | 30 |
+| records omitted from POE learning | 40 |
+| neutral assignment rate | 95.1% |
+| all-neutral scored records | 40 |
 
 ---
 
@@ -91,6 +95,7 @@ poea score-evidence        Score evidence against active concepts (requires FIRE
 poea export-nodes          Export active concepts as POE-compatible node objects
 poea run-backend           Run a structure-learning backend (--backend null|poe)
 poea pipeline              Run the full evidence-to-graph pipeline
+poea report                Regenerate run_report.md from existing artifacts
 ```
 
 ---
@@ -149,7 +154,7 @@ Domain ID used: `poea-induced-v1` (configurable via `configs/induction_config.ya
 ## Test Suite
 
 ```
-243 passed, 1 skipped
+247 passed, 1 skipped
 ```
 
 Latest verification also passed:

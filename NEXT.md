@@ -1,43 +1,20 @@
-# Next: Phase 11 — Run Reports
+# Next: Phase 12 — Comparative Mode
 
 ---
 
 ## Objective
 
-Make pipeline behavior inspectable after every run.
+Compare POE-A against POE v1 as an empirical diagnostic.
 
-Phase 10 now writes a basic `artifacts/run_report.md` as part of `poea pipeline`.
-Phase 11 should turn that report into a first-class reporting capability with
-deeper audit detail and a dedicated report command.
+Phase 11 is complete: `poea report --run latest` regenerates
+`artifacts/run_report.md` from existing artifacts without live API calls or
+pipeline re-execution.
 
 ---
 
 ## Current Baseline
 
-Implemented in Phase 10:
-
-```bash
-poea pipeline \
-  --domain art \
-  --input ../art-market-domain/data/manual_ingest_split \
-  --backend poe \
-  --output artifacts/poea_graph.json
-```
-
-The command produced:
-
-```text
-artifacts/evidence.json
-artifacts/raw_concepts.json
-artifacts/concept_registry.json
-artifacts/canonical_concepts.json
-artifacts/scored_evidence.json
-artifacts/nodes.json
-artifacts/poea_graph.json
-artifacts/run_report.md
-```
-
-Latest run summary:
+Latest POE-A run artifacts report:
 
 - Evidence records: 70
 - Raw concepts: 21
@@ -46,63 +23,51 @@ Latest run summary:
 - Scoring errors: 0
 - Graph nodes: 11
 - Graph edges: 1
+- Records included in POE learning: 30
+- Records omitted from POE learning: 40
+- Neutral assignment rate: 95.1%
+- All-neutral scored records: 40
+
+The high neutral rate and POE-learning omission count should be treated as
+diagnostics when comparing against POE v1.
 
 ---
 
-## Phase 11 Requirements
+## Phase 12 Requirements
 
-From `IMPLEMENTATION_PLAN.md`, run reports should include:
+From `IMPLEMENTATION_PLAN.md`, comparative mode should compare:
 
-- evidence records loaded
-- concepts proposed
-- concepts merged
-- active concepts selected
-- dropped concepts
-- evidence scoring summary
-- assignments per concept
-- neutral rate
-- sample scorer outputs for spot-checking scorer accuracy
-- backend used
-- graph summary
-- warnings
-- configuration
-- model used
-- timestamps
+```text
+POE v1:
+manual variables + evidence -> graph
 
----
-
-## Implementation Tasks
-
-1. Add a dedicated command:
-
-```bash
-poea report --run latest
+POE-A:
+induced variables + scored evidence -> graph
 ```
 
-2. Expand report generation beyond the Phase 10 baseline:
+The report should identify:
 
-- Include concept-level scoring table from `scored_evidence.json`.
-- Include sample scored evidence records.
-- Include active, suppressed, rejected, and merged concept counts.
-- Include backend candidate summaries when present in the graph artifact.
-- Include report inputs and artifact modification timestamps.
+- nodes present only in POE v1
+- nodes present only in POE-A
+- overlapping or semantically similar nodes
+- edge count differences
+- hypothesis differences
+- surprising POE-A discoveries
+- POE-A failure modes
 
-3. Keep reports read-only.
+---
 
-The report command should inspect existing artifacts. It must not re-run
-induction, scoring, consolidation, or backend learning.
+## Expected Command
 
-4. Add tests for:
-
-- report generation from complete artifacts
-- report generation when optional artifacts are missing
-- neutral-rate calculation
-- sample scorer-output rendering
+```bash
+poea compare \
+  --poea-graph artifacts/poea_graph.json \
+  --poe-v1-snapshot ../art-market-domain/reports/art_snapshot_weighted.txt \
+  --output artifacts/comparison_report.md
+```
 
 ---
 
 ## Exit Criteria
 
-Every pipeline run leaves an auditable trail, and `poea report --run latest`
-can regenerate or refresh the report from existing artifacts without live API
-calls.
+A readable comparison report exists.

@@ -784,6 +784,7 @@ poea diff
 poea export
 poea run-backend
 poea pipeline
+poea report
 ```
 
 ---
@@ -818,6 +819,12 @@ artifacts/run_report.md
 passed. With `--backend null`, the command can run without live scored evidence
 for local tests. With `--backend poe`, scored evidence is generated or reused
 before invoking POE.
+
+`poea report --run latest` regenerates `artifacts/run_report.md` from existing
+artifacts without re-running induction, scoring, consolidation, node export, or
+backend learning. The report includes concept status counts, assignment rates,
+sample scorer outputs, backend graph and candidate summaries, artifact paths,
+timestamps, warnings, and POE-learning inclusion/omission diagnostics.
 
 This preserves the core acceptance condition:
 

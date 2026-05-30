@@ -20,6 +20,12 @@ poea pipeline \
 The pipeline reuses existing intermediate artifacts unless `--force` is passed.
 It writes `artifacts/run_report.md` on every run.
 
+Regenerate the latest report from existing artifacts without live API calls:
+
+```bash
+poea report --run latest
+```
+
 ## Manual Stage Commands
 
 ```bash
@@ -45,6 +51,9 @@ poea score-evidence --concepts artifacts/canonical_concepts.json --evidence arti
 # Export nodes and run a backend manually
 poea export-nodes --concepts artifacts/canonical_concepts.json --output artifacts/nodes.json --domain art
 poea run-backend --backend poe --concepts artifacts/canonical_concepts.json --scored-evidence artifacts/scored_evidence.json --output artifacts/poea_graph.json
+
+# Regenerate an audit report from the current artifacts
+poea report --run latest --output-dir artifacts
 ```
 
 ## LLM Provider
@@ -91,6 +100,7 @@ poea score-evidence   Score evidence against active concepts (Assignment Bridge)
 poea export-nodes     Export active concepts as POE-compatible node objects
 poea run-backend      Run a structure-learning backend (--backend null|poe)
 poea pipeline         Run evidence → concepts → registry → scoring → backend → report
+poea report           Regenerate run_report.md from existing artifacts
 ```
 
 ## Architecture
@@ -113,6 +123,7 @@ Concept-to-Node Translation           ✓ Phase 8 complete
 POE Structure Learning                ✓ Phase 9 complete
     ↓
 Ontology Graph                        ✓ Phase 10 complete via `poea pipeline`
+Run Reports                           ✓ Phase 11 complete via `poea report`
 ```
 
 See `SPEC.md` and `IMPLEMENTATION_PLAN.md` for full design documentation.
