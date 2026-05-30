@@ -94,3 +94,4 @@ Ontology Graph
 See `SPEC.md` and `IMPLEMENTATION_PLAN.md` for full design documentation.
 See `SNAPSHOT.md` for current implementation status and architectural divergences.
 See `NEXT.md` for Phase 6 implementation plan.
+# probabilistic_ontology_engine_abductive
