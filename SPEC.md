@@ -783,7 +783,49 @@ poea score-evidence
 poea diff
 poea export
 poea run-backend
+poea pipeline
 ```
+
+---
+
+# MVP-0 Pipeline Status
+
+The current MVP-0 implementation exposes an end-to-end pipeline command:
+
+```bash
+poea pipeline \
+  --domain art \
+  --input ../art-market-domain/data/manual_ingest_split \
+  --backend poe \
+  --output artifacts/poea_graph.json
+```
+
+The implementation uses the documented JSON artifact architecture rather than
+the original SQLite registry placeholder. The current pipeline artifacts are:
+
+```text
+artifacts/evidence.json
+artifacts/raw_concepts.json
+artifacts/concept_registry.json
+artifacts/canonical_concepts.json
+artifacts/scored_evidence.json
+artifacts/nodes.json
+artifacts/poea_graph.json
+artifacts/run_report.md
+```
+
+`poea pipeline` reuses existing intermediate artifacts unless `--force` is
+passed. With `--backend null`, the command can run without live scored evidence
+for local tests. With `--backend poe`, scored evidence is generated or reused
+before invoking POE.
+
+This preserves the core acceptance condition:
+
+```text
+The system receives evidence before it receives concepts.
+```
+
+The pipeline still must not receive a hand-authored domain variable list.
 
 ---
 

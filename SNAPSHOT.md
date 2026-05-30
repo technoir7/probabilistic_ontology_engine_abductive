@@ -17,8 +17,8 @@ _Last updated: 2026-05-30_
 | 6 | Evidence Scoring (Assignment Bridge) | Complete |
 | 7 | Backend Interface | Complete |
 | 8 | Concept-to-Node Translation | Complete |
-| 9 | POE Adapter | **Complete** |
-| 10 | End-to-End Pipeline Command | Not Started |
+| 9 | POE Adapter | Complete |
+| 10 | End-to-End Pipeline Command | **Complete** |
 | 11 | Run Reports | Not Started |
 | 12 | Comparative Mode | Not Started |
 | 13+ | Post-MVP phases | Not Started |
@@ -63,7 +63,20 @@ Promotion thresholds: conf ≥ 0.75, evidence ≥ 2, cap 30.
 | `artifacts/canonical_concepts.json` | Active concepts only |
 | `artifacts/nodes.json` | POE-compatible node objects (Phase 8 output; gitignored) |
 | `artifacts/scored_evidence.json` | Concept assignments per evidence record (requires live API; gitignored) |
-| `artifacts/poea_graph.json` | Graph artifact from last `poea run-backend` call (gitignored) |
+| `artifacts/poea_graph.json` | Graph artifact from last `poea pipeline --backend poe` run (gitignored) |
+| `artifacts/run_report.md` | Phase 10 pipeline run report (gitignored) |
+
+Latest Phase 10 POE pipeline run:
+
+| Metric | Value |
+|--------|------:|
+| evidence records | 70 |
+| raw concepts | 21 |
+| active concepts | 11 |
+| scored concept/evidence pairs | 770 |
+| scoring errors | 0 |
+| graph nodes | 11 |
+| graph edges | 1 |
 
 ---
 
@@ -77,6 +90,7 @@ poea registry promote      Re-apply promotion rules (threshold tuning)
 poea score-evidence        Score evidence against active concepts (requires FIREWORKS_API_KEY)
 poea export-nodes          Export active concepts as POE-compatible node objects
 poea run-backend           Run a structure-learning backend (--backend null|poe)
+poea pipeline              Run the full evidence-to-graph pipeline
 ```
 
 ---
@@ -135,7 +149,13 @@ Domain ID used: `poea-induced-v1` (configurable via `configs/induction_config.ya
 ## Test Suite
 
 ```
-239 passed, 1 failed (pre-existing: openai module not installed), 1 skipped
+243 passed, 1 skipped
 ```
 
-Pre-existing failure: `test_inducer_retries_on_rate_limit` imports `openai` which is not in the active venv. Not a regression.
+Latest verification also passed:
+
+```bash
+.venv/bin/python -m ruff check .
+```
+
+Result: all checks passed.

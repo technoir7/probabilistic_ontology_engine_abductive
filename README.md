@@ -8,6 +8,21 @@ POE-A constructs ontology graphs from evidence without requiring a fixed, hand-a
 # Install
 pip install -e .
 
+# Run the full pipeline from raw evidence to graph
+export FIREWORKS_API_KEY=your-key-here
+poea pipeline \
+  --domain art \
+  --input ../art-market-domain/data/manual_ingest_split \
+  --backend poe \
+  --output artifacts/poea_graph.json
+```
+
+The pipeline reuses existing intermediate artifacts unless `--force` is passed.
+It writes `artifacts/run_report.md` on every run.
+
+## Manual Stage Commands
+
+```bash
 # Load evidence (strips pre-existing variable annotations)
 poea ingest --input ../art-market-domain/data/manual_ingest_split --domain art --output artifacts/evidence.json
 
@@ -26,6 +41,10 @@ poea registry promote --include-suppressed --confidence 0.65 --auto
 
 # Score evidence against active concepts (Assignment Bridge)
 poea score-evidence --concepts artifacts/canonical_concepts.json --evidence artifacts/evidence.json --output artifacts/scored_evidence.json --verbose
+
+# Export nodes and run a backend manually
+poea export-nodes --concepts artifacts/canonical_concepts.json --output artifacts/nodes.json --domain art
+poea run-backend --backend poe --concepts artifacts/canonical_concepts.json --scored-evidence artifacts/scored_evidence.json --output artifacts/poea_graph.json
 ```
 
 ## LLM Provider
@@ -71,6 +90,7 @@ poea registry promote Re-apply promotion rules to registry (threshold tuning)
 poea score-evidence   Score evidence against active concepts (Assignment Bridge)
 poea export-nodes     Export active concepts as POE-compatible node objects
 poea run-backend      Run a structure-learning backend (--backend null|poe)
+poea pipeline         Run evidence → concepts → registry → scoring → backend → report
 ```
 
 ## Architecture
@@ -92,10 +112,10 @@ Concept-to-Node Translation           ✓ Phase 8 complete
     ↓
 POE Structure Learning                ✓ Phase 9 complete
     ↓
-Ontology Graph
+Ontology Graph                        ✓ Phase 10 complete via `poea pipeline`
 ```
 
 See `SPEC.md` and `IMPLEMENTATION_PLAN.md` for full design documentation.
 See `SNAPSHOT.md` for current implementation status and architectural divergences.
-See `NEXT.md` for Phase 6 implementation plan.
+See `NEXT.md` for the next implementation phase.
 # probabilistic_ontology_engine_abductive

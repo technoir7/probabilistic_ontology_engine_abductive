@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 import typer
 import yaml
@@ -15,6 +16,7 @@ from .artifacts.exporters import (
     load_canonical_concepts,
     write_nodes,
 )
+from .artifacts.reports import write_run_report
 from .backends import get_backend
 from .concepts.inducer import ConceptInducer, InductionConfig
 from .concepts.scorer import (
@@ -199,6 +201,66 @@ def _load_config(config_path: Path) -> dict:
         return {}
     with config_path.open() as f:
         return yaml.safe_load(f) or {}
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    with path.open(encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_json(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def _load_evidence_units(path: Path) -> list[EvidenceUnit]:
+    with path.open(encoding="utf-8") as f:
+        raw_units = json.load(f)
+    return [EvidenceUnit.model_validate(u) for u in raw_units]
+
+
+def _load_active_concepts(path: Path) -> list[ConceptEntry]:
+    with path.open(encoding="utf-8") as f:
+        concepts_data = json.load(f)
+    return [ConceptEntry.model_validate(c) for c in concepts_data.get("concepts", [])]
+
+
+def _write_raw_concepts(
+    path: Path,
+    *,
+    model: str,
+    evidence_count: int,
+    results: list,
+    include_raw_responses: bool,
+) -> None:
+    all_concepts = [c for r in results for c in r.concepts]
+    errors = [r for r in results if r.error]
+    _write_json(
+        path,
+        {
+            "model": model,
+            "evidence_count": evidence_count,
+            "batch_count": len(results),
+            "concept_count": len(all_concepts),
+            "errors": [{"batch": r.batch_index, "error": r.error} for r in errors],
+            "batches": [
+                {
+                    "batch": r.batch_index,
+                    "evidence_ids": r.evidence_ids,
+                    "concept_count": len(r.concepts),
+                    "error": r.error,
+                    **(
+                        {"raw_response": r.raw_response}
+                        if include_raw_responses
+                        else {}
+                    ),
+                }
+                for r in results
+            ],
+            "concepts": [c.model_dump() for c in all_concepts],
+        },
+    )
 
 
 @app.command()
@@ -409,6 +471,316 @@ def consolidate(
     console.print(f"\n  Promotion threshold:  conf ≥ {metrics.promotion_confidence_threshold}, evidence ≥ {metrics.min_supporting_evidence}, cap {metrics.max_active_concepts}")
     console.print(f"\n  → {output_dir}/concept_registry.json")
     console.print(f"  → {output_dir}/canonical_concepts.json")
+
+
+@app.command()
+def pipeline(
+    input: Annotated[
+        Path,
+        typer.Option("--input", "-i", help="JSON file or directory of raw evidence JSON files"),
+    ],
+    domain: Annotated[
+        str,
+        typer.Option("--domain", "-d", help="Domain tag for normalized evidence and exported nodes"),
+    ] = "unknown",
+    backend_name: Annotated[
+        str,
+        typer.Option("--backend", "-b", help="Backend name: 'null' or 'poe'"),
+    ] = "null",
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Output graph artifact path"),
+    ] = Path("artifacts/poea_graph.json"),
+    output_dir: Annotated[
+        Path,
+        typer.Option("--output-dir", help="Directory for intermediate pipeline artifacts"),
+    ] = Path("artifacts"),
+    config_path: Annotated[
+        Optional[Path],
+        typer.Option("--config", "-c", help="Config YAML path"),
+    ] = None,
+    consolidation_map: Annotated[
+        Optional[Path],
+        typer.Option("--consolidation-map", "-m", help="Consolidation map YAML"),
+    ] = None,
+    domain_id: Annotated[
+        Optional[str],
+        typer.Option("--domain-id", help="Domain ID for POE backend"),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Re-run stages even when their artifacts already exist"),
+    ] = False,
+    debug_responses: Annotated[
+        bool,
+        typer.Option("--debug-responses", help="Include raw induction LLM responses in raw_concepts.json"),
+    ] = False,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
+) -> None:
+    """
+    Run the POE-A pipeline from raw evidence to graph artifact.
+
+    Existing intermediate artifacts are reused unless --force is supplied.
+    With --backend null, scoring is skipped when no scored_evidence.json
+    exists so tests and dry runs do not require live LLM scoring.
+    """
+    if verbose:
+        logging.getLogger().setLevel(logging.INFO)
+
+    if not input.exists() and (force or not (output_dir / "evidence.json").exists()):
+        err_console.print(f"[red]Input path does not exist: {input}[/red]")
+        raise typer.Exit(1)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    cfg_path = config_path or Path("configs/induction_config.yaml")
+    raw_config = _load_config(cfg_path)
+
+    artifacts = {
+        "evidence": output_dir / "evidence.json",
+        "raw_concepts": output_dir / "raw_concepts.json",
+        "registry": output_dir / "concept_registry.json",
+        "canonical_concepts": output_dir / "canonical_concepts.json",
+        "scored_evidence": output_dir / "scored_evidence.json",
+        "nodes": output_dir / "nodes.json",
+        "graph": output,
+        "run_report": output_dir / "run_report.md",
+    }
+
+    stages: list[dict[str, Any]] = []
+    warnings: list[str] = []
+
+    console.print("[bold]POE-A pipeline[/bold]")
+    console.print(f"  Domain:  {domain}")
+    console.print(f"  Backend: {backend_name}")
+
+    # 1. Load evidence
+    evidence_path = artifacts["evidence"]
+    if force or not evidence_path.exists():
+        units = load_from_path(input, domain_tag=domain)
+        if not units:
+            err_console.print("[red]No evidence records loaded[/red]")
+            raise typer.Exit(1)
+        _write_json(evidence_path, [u.model_dump() for u in units])
+        stages.append(
+            {
+                "name": "ingest",
+                "status": "ran",
+                "detail": f"{len(units)} evidence records -> {evidence_path}",
+            }
+        )
+    else:
+        units = _load_evidence_units(evidence_path)
+        stages.append(
+            {
+                "name": "ingest",
+                "status": "skipped",
+                "detail": f"reused {evidence_path} ({len(units)} records)",
+            }
+        )
+
+    # 2. Induce concepts
+    raw_concepts_path = artifacts["raw_concepts"]
+    if force or not raw_concepts_path.exists():
+        induction_cfg = InductionConfig.from_dict(raw_config)
+        inducer = ConceptInducer(config=induction_cfg, debug_responses=debug_responses)
+        results = inducer.induce(units)
+        errors = [r for r in results if r.error]
+        all_concepts = [c for r in results for c in r.concepts]
+        _write_raw_concepts(
+            raw_concepts_path,
+            model=induction_cfg.model,
+            evidence_count=len(units),
+            results=results,
+            include_raw_responses=debug_responses,
+        )
+        if errors:
+            err_console.print(f"[red]Induction failed in {len(errors)} batch(es)[/red]")
+            raise typer.Exit(1)
+        if not all_concepts:
+            err_console.print("[red]Induction produced no concepts[/red]")
+            raise typer.Exit(1)
+        stages.append(
+            {
+                "name": "induce",
+                "status": "ran",
+                "detail": f"{len(all_concepts)} concepts -> {raw_concepts_path}",
+            }
+        )
+    else:
+        raw_data = _load_json(raw_concepts_path)
+        stages.append(
+            {
+                "name": "induce",
+                "status": "skipped",
+                "detail": f"reused {raw_concepts_path} ({raw_data.get('concept_count', 0)} concepts)",
+            }
+        )
+
+    # 3-5. Consolidate/import/promote registry
+    registry_path = artifacts["registry"]
+    canonical_path = artifacts["canonical_concepts"]
+    if force or not registry_path.exists() or not canonical_path.exists():
+        concept_cfg = raw_config.get("concepts", {})
+        cmap_path = consolidation_map or Path("configs/consolidation_map.yaml")
+        if not cmap_path.exists():
+            warnings.append(f"No consolidation map found at {cmap_path}; used empty consolidation map.")
+            cmap_path = None
+        metrics = build_registry(
+            raw_concepts_path=raw_concepts_path,
+            consolidation_map_path=cmap_path,
+            output_dir=output_dir,
+            promotion_confidence=concept_cfg.get("promotion_confidence", 0.75),
+            min_evidence=concept_cfg.get("min_supporting_evidence", 2),
+            max_active=concept_cfg.get("max_active_concepts", 30),
+        )
+        stages.append(
+            {
+                "name": "consolidate/promote",
+                "status": "ran",
+                "detail": f"{metrics.active_canonical_count} active concepts -> {canonical_path}",
+            }
+        )
+    else:
+        canonical_data = _load_json(canonical_path)
+        stages.append(
+            {
+                "name": "consolidate/promote",
+                "status": "skipped",
+                "detail": f"reused {canonical_path} ({len(canonical_data.get('concepts', []))} active concepts)",
+            }
+        )
+
+    # 6. Score evidence against active concepts.
+    scored_path = artifacts["scored_evidence"]
+    scored_records_for_backend: list[dict[str, Any]] = []
+    if force or not scored_path.exists():
+        if backend_name == "null":
+            warnings.append(
+                "Skipped live evidence scoring for null backend because no scored_evidence.json artifact existed."
+            )
+            stages.append(
+                {
+                    "name": "score-evidence",
+                    "status": "skipped",
+                    "detail": "null backend path does not require scored evidence",
+                }
+            )
+        else:
+            active_concepts = _load_active_concepts(canonical_path)
+            scoring_cfg = ScoringConfig.from_dict(raw_config)
+            scorer = EvidenceScorer(config=scoring_cfg)
+            records, stats = scorer.score_all(evidence=units, concepts=active_concepts)
+            metadata = {
+                "canonical_concepts_source": str(canonical_path),
+                "evidence_source": str(evidence_path),
+                "concept_count": len(active_concepts),
+                "evidence_count": len(units),
+                "model": scoring_cfg.model,
+                "soft_observed_threshold": scoring_cfg.soft_observed_threshold,
+                "scored_at": datetime.now(timezone.utc).isoformat(),
+            }
+            save_scored_evidence(scored_path, records, stats, metadata)
+            scored_records_for_backend = [r.model_dump() for r in records]
+            if stats.errors:
+                warnings.append(f"Evidence scoring completed with {stats.errors} record-level error(s).")
+            stages.append(
+                {
+                    "name": "score-evidence",
+                    "status": "ran",
+                    "detail": f"{stats.total_pairs} concept/evidence pairs -> {scored_path}",
+                }
+            )
+    else:
+        records = load_scored_evidence(scored_path)
+        scored_records_for_backend = [r.model_dump() for r in records]
+        stages.append(
+            {
+                "name": "score-evidence",
+                "status": "skipped",
+                "detail": f"reused {scored_path} ({len(records)} records)",
+            }
+        )
+
+    # 7. Export nodes
+    nodes_path = artifacts["nodes"]
+    if force or not nodes_path.exists():
+        active_concepts, _ = load_canonical_concepts(canonical_path)
+        nodes_artifact = concepts_to_nodes(active_concepts, domain_tag=domain)
+        write_nodes(nodes_path, nodes_artifact)
+        stages.append(
+            {
+                "name": "export-nodes",
+                "status": "ran",
+                "detail": f"{nodes_artifact['node_count']} nodes -> {nodes_path}",
+            }
+        )
+    else:
+        nodes_artifact = _load_json(nodes_path)
+        stages.append(
+            {
+                "name": "export-nodes",
+                "status": "skipped",
+                "detail": f"reused {nodes_path} ({nodes_artifact.get('node_count', 0)} nodes)",
+            }
+        )
+
+    # 8-9. Run backend and save graph
+    if force or not output.exists():
+        active_concepts = [c.model_dump() for c in _load_active_concepts(canonical_path)]
+        if not scored_records_for_backend and scored_path.exists():
+            scored_records_for_backend = [r.model_dump() for r in load_scored_evidence(scored_path)]
+
+        resolved_domain_id = domain_id
+        if resolved_domain_id is None:
+            resolved_domain_id = raw_config.get("backend", {}).get("domain_id", "poea-induced-v1")
+        backend_kwargs = {"domain_id": resolved_domain_id} if backend_name == "poe" else {}
+        try:
+            backend = get_backend(backend_name, **backend_kwargs)
+        except (ValueError, ImportError) as exc:
+            err_console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1)
+        graph = backend.learn_graph(active_concepts, scored_records_for_backend)
+        _write_json(output, dict(graph))
+        stages.append(
+            {
+                "name": "run-backend",
+                "status": "ran",
+                "detail": f"{graph.get('node_count', 0)} nodes, {graph.get('edge_count', 0)} edges -> {output}",
+            }
+        )
+    else:
+        graph = _load_json(output)
+        stages.append(
+            {
+                "name": "run-backend",
+                "status": "skipped",
+                "detail": f"reused {output} ({graph.get('node_count', 0)} nodes, {graph.get('edge_count', 0)} edges)",
+            }
+        )
+
+    # 10. Generate run report
+    report_path = artifacts["run_report"]
+    stages.append(
+        {
+            "name": "report",
+            "status": "ran",
+            "detail": f"run report -> {report_path}",
+        }
+    )
+    write_run_report(
+        report_path,
+        domain=domain,
+        backend=backend_name,
+        artifacts={k: str(v) for k, v in artifacts.items()},
+        stages=stages,
+        warnings=warnings,
+        config=raw_config,
+    )
+
+    console.print("\n[bold green]Pipeline complete[/bold green]")
+    console.print(f"  Graph:      {output}")
+    console.print(f"  Run report: {report_path}")
 
 
 @app.command("score-evidence")
