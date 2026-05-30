@@ -10,6 +10,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from .backends import get_backend
 from .concepts.inducer import ConceptInducer, InductionConfig
 from .concepts.scorer import (
     EvidenceScorer,
@@ -534,3 +535,104 @@ def score_evidence(
                 neutral_rate,
             )
         console.print(table)
+
+
+@app.command("run-backend")
+def run_backend(
+    backend_name: Annotated[
+        str,
+        typer.Option("--backend", "-b", help="Backend name (e.g. 'null')"),
+    ] = "null",
+    concepts: Annotated[
+        Path,
+        typer.Option("--concepts", "-c", help="Path to canonical_concepts.json"),
+    ] = Path("artifacts/canonical_concepts.json"),
+    scored_evidence: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--scored-evidence",
+            "-s",
+            help="Path to scored_evidence.json (optional; uses empty evidence if absent)",
+        ),
+    ] = None,
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Output graph artifact path"),
+    ] = Path("artifacts/poea_graph.json"),
+    verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
+) -> None:
+    """
+    Run a structure-learning backend against active concepts and scored evidence.
+
+    Available backends: null (Phase 7).  The 'poe' backend is added in Phase 9.
+    """
+    if verbose:
+        logging.getLogger().setLevel(logging.INFO)
+
+    if not concepts.exists():
+        err_console.print(f"[red]Canonical concepts file not found: {concepts}[/red]")
+        err_console.print("Run: poea consolidate --concepts artifacts/raw_concepts.json")
+        raise typer.Exit(1)
+
+    # Load concepts
+    with concepts.open(encoding="utf-8") as f:
+        concepts_data = json.load(f)
+    active_concepts = concepts_data.get("concepts", [])
+
+    if not active_concepts:
+        err_console.print("[red]No active concepts found in concepts file[/red]")
+        raise typer.Exit(1)
+
+    # Load scored evidence (optional)
+    scored: list = []
+    if scored_evidence is not None:
+        if not scored_evidence.exists():
+            err_console.print(f"[red]Scored evidence file not found: {scored_evidence}[/red]")
+            err_console.print("Run: poea score-evidence --concepts ... --evidence ...")
+            raise typer.Exit(1)
+        records = load_scored_evidence(scored_evidence)
+        scored = [r.model_dump() for r in records]
+        if verbose:
+            console.print(f"[dim]Loaded {len(scored)} scored record(s) from {scored_evidence}[/dim]")
+    else:
+        console.print("[yellow]No scored evidence provided — running backend with empty evidence[/yellow]")
+
+    # Resolve and invoke backend
+    try:
+        backend = get_backend(backend_name)
+    except ValueError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+
+    console.print(
+        f"Running [bold]{backend_name}[/bold] backend  "
+        f"({len(active_concepts)} concept(s), {len(scored)} evidence record(s))"
+    )
+
+    try:
+        graph = backend.learn_graph(active_concepts, scored)
+    except Exception as exc:
+        err_console.print(f"[red]Backend learn_graph failed: {exc}[/red]")
+        raise typer.Exit(1)
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("w", encoding="utf-8") as f:
+        json.dump(dict(graph), f, indent=2, ensure_ascii=False)
+
+    console.print("\n[bold]Graph complete[/bold]")
+    console.print(f"  Backend:    {graph.get('backend', backend_name)}")
+    console.print(f"  Nodes:      {graph.get('node_count', '?')}")
+    console.print(f"  Edges:      {graph.get('edge_count', '?')}")
+    console.print(f"\n  → {output}")
+
+    if verbose:
+        nodes = graph.get("nodes", [])
+        if nodes:
+            table = Table("name", "prior_probability", "source")
+            for node in nodes:
+                table.add_row(
+                    node.get("name", ""),
+                    str(node.get("prior_probability", "")),
+                    node.get("source", ""),
+                )
+            console.print(table)

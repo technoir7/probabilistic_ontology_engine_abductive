@@ -1,12 +1,14 @@
-# Next: Phase 7 — Backend Interface
+# Next: Phase 8 — Concept-to-Node Translation
 
 ---
 
 ## Objective
 
-Define the contract between POE-A and structure-learning systems.
+Translate active concepts from the registry into POE-compatible node objects.
 
-POE-A must not hardwire itself to POE internals. The backend interface is a pluggable protocol that any structure-learning system can implement.
+This is a translation/export layer. The POE adapter (Phase 9) will consume these
+nodes to build POE `Variable` objects. The format must match POE's expected node
+schema.
 
 ---
 
@@ -15,81 +17,74 @@ POE-A must not hardwire itself to POE internals. The backend interface is a plug
 | Input | Location | Status |
 |-------|----------|--------|
 | Active concept set | `artifacts/canonical_concepts.json` | Ready (11 concepts) |
-| Scored evidence | `artifacts/scored_evidence.json` | Ready (after live run) |
-| Concept-keyed assignments | inside scored_evidence.json | Ready |
+| Backend interface | `src/poea/backends/interface.py` | Ready (Phase 7) |
+| NullBackend | `src/poea/backends/null_backend.py` | Ready (Phase 7) |
 
 ---
 
-## What Phase 7 Must Produce
+## What Phase 8 Must Produce
 
-### 1. Protocol definition — `src/poea/backends/interface.py`
+### Node artifact format (`artifacts/nodes.json`)
 
-```python
-from typing import Any, Mapping, Protocol, Sequence
-
-class StructureLearningBackend(Protocol):
-    def learn_graph(
-        self,
-        concepts: Sequence[Mapping[str, Any]],
-        scored_evidence: Sequence[Mapping[str, Any]],
-        config: Mapping[str, Any] | None = None,
-    ) -> Mapping[str, Any]: ...
-
-    def score_hypotheses(
-        self,
-        graph: Mapping[str, Any],
-        scored_evidence: Sequence[Mapping[str, Any]],
-        config: Mapping[str, Any] | None = None,
-    ) -> Mapping[str, Any]: ...
+```json
+{
+  "domain_tag": "art",
+  "node_count": 11,
+  "nodes": [
+    {
+      "name": "AuctionCatalystEffect",
+      "definition": "...",
+      "prior_probability": 0.5,
+      "boolean_state": null,
+      "source": "poea_induced"
+    }
+  ]
+}
 ```
 
-Note: the parameter is `scored_evidence`, not raw `evidence`. Backends receive pre-scored
-assignments, not raw text.
+### Exporter module — `src/poea/artifacts/exporters.py`
 
-### 2. Null backend — `src/poea/backends/null_backend.py`
+Function to convert active `ConceptEntry` objects into node dicts.
 
-The NullBackend must:
-- Accept active concepts
-- Accept scored evidence assignments
-- Return a trivial graph artifact (one node per concept, no edges)
-- Allow CLI testing without POE
+### CLI command
 
-### 3. Backend registration / factory
+```bash
+poea export-nodes \
+  --concepts artifacts/canonical_concepts.json \
+  --output artifacts/nodes.json \
+  [--domain art]
+```
 
-A mechanism to select backend by name (e.g., `"null"`, `"poe"`) for use by the Phase 10 pipeline command.
+Note: the spec uses `--db artifacts/poea_registry.sqlite` but we use `--concepts`
+to match the current JSON-based architecture.
 
 ---
 
 ## Implementation Tasks
 
-1. Create `src/poea/backends/` directory with `__init__.py`
-2. Implement `src/poea/backends/interface.py` — StructureLearningBackend protocol
-3. Implement `src/poea/backends/null_backend.py` — NullBackend
-4. Add `poea run-backend` CLI command (null backend only; POE backend in Phase 9)
-5. Add tests — `tests/test_backend_interface.py`
-
-### CLI
-
-```bash
-poea run-backend \
-  --backend null \
-  --concepts artifacts/canonical_concepts.json \
-  --scored-evidence artifacts/scored_evidence.json \
-  --output artifacts/poea_graph.json
-```
+1. Create `src/poea/artifacts/` directory with `__init__.py`
+2. Implement `src/poea/artifacts/exporters.py`
+   - `concepts_to_nodes(concepts, domain_tag) -> list[dict]`
+   - Node fields: `name`, `definition`, `prior_probability=0.5`, `boolean_state=None`, `source="poea_induced"`
+3. Add `poea export-nodes` CLI command
+4. Add tests — `tests/test_export_nodes.py`
 
 ---
 
-## Exit Criteria (from IMPLEMENTATION_PLAN.md Phase 7)
+## Exit Criteria (from IMPLEMENTATION_PLAN.md Phase 8)
 
-- Backend interface works independently of POE
-- NullBackend returns a trivial graph (one node per concept, no edges)
-- CLI testing works without a POE installation
+- Active concepts export as nodes
+- No hardcoded art variables (domain-agnostic)
+- `prior_probability = 0.5` for all induced nodes
+- `boolean_state = null` for all induced nodes
 
 ---
 
-## Phase 7 Unblocks
+## Phase 8 Unblocks
 
-Phase 8 (Concept-to-Node Translation) and Phase 9 (POE Adapter) both implement the backend interface. Phase 10 (End-to-End Pipeline) depends on all backends being wired to the CLI.
+Phase 9 (POE Adapter) consumes `nodes.json` to build `Variable` objects for POE.
+The POE adapter also needs the scored evidence from Phase 6.
 
-The NullBackend from Phase 7 allows Phase 10 to be partially tested without Phase 9 complete.
+After Phase 8, all inputs for Phase 9 will be available:
+- `artifacts/nodes.json` — induced concept nodes
+- `artifacts/scored_evidence.json` — concept assignments per evidence record
