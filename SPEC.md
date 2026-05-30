@@ -609,7 +609,7 @@ The router itself is deterministic. POE-A must not use an LLM to decide whether 
 `AssignmentRouter` chooses an assignment backend from evidence metadata and structure:
 
 * `DirectStructuredAssignmentBackend` maps existing structured assignments into scored records with no LLM call.
-* `DeterministicMapperBackend` runs registered domain mappers or rule assignment maps with no LLM call. This is the POE-A analogue of old POE DomainModule evidence mappers.
+* `DeterministicMapperBackend` runs registered domain mappers or rule assignment maps with no LLM call. It also discovers lazy adapters for old POE deterministic mappers in `../probabilistic_ontology_engine/src/domains/`.
 * `SemanticLLMScorerBackend` wraps the existing LLM scorer for prose text.
 * `HybridPrefilterScorerBackend` conservatively handles mixed evidence by using direct assignments when present and semantic fallback otherwise.
 
@@ -618,15 +618,33 @@ Routing rules are deterministic:
 * `assignment_mode: direct_structured` or structured assignment metadata -> direct structured assignment
 * `assignment_mode: deterministic`, `evidence_type: structured_numeric`, `evidence_type: tabular`, or numeric observation metadata -> deterministic mapper
 * `evidence_type: structured_json_with_assignments` -> direct structured assignment
-* `evidence_type: prose_text` -> semantic scorer
+* `evidence_type: prose_text` or `evidence_type: unstructured_text` -> semantic scorer
 * `evidence_type: mixed` -> hybrid scorer
-* otherwise -> semantic scorer, preserving current art-market behavior
+* otherwise -> deterministic mapper; missing mapper is an explicit error, not semantic fallback
 
 The default evidence normalizer still excludes top-level `assignments` and
 `causal_claims` from induction text to prevent vocabulary leakage. Direct
 structured assignment is intended for controlled normalized evidence artifacts
 or metadata fields such as `structured_assignments`, `concept_assignments`,
 `deterministic_assignments`, or registered domain mapper outputs.
+
+For current art-market article ingestion, the normalizer marks prose records as
+`evidence_type: prose_text`, preserving semantic scoring for that corpus while
+keeping structured evidence deterministic by default.
+
+Old POE mapper reuse:
+
+* `OldPOEDomainMapperAdapter` calls old POE `*Pipeline.build_evidence_record`
+  methods where compatible.
+* Old POE `EvidenceRecord` / `ObservedAssignment` outputs are translated into
+  POE-A `ScoredRecord` / `ConceptAssignment` artifacts.
+* Old POE canonical variable IDs are preserved when active concept IDs already
+  match those stable variable UUIDs; otherwise assignments match by variable
+  name.
+* Supported discovered domains include `macro-regime-v1`, `natural-gas-v1`,
+  `ai-regime-v1`, `sovereign-debt-v1`, `credit-cycle-v1`,
+  `energy-regime-v1`, `labor-market-v1`, `crypto-regime-v1`,
+  `geopolitics-v1`, and `sf-urban-v1`.
 
 When semantic scoring is selected, the LLM scorer evaluates all active concepts for a single evidence record in one call to reduce API cost.
 
@@ -659,7 +677,7 @@ Low-confidence assignments use `missingness: "SOFT_OBSERVED"`.
 
 The evidence scorer is an interpretation layer. Its output is the data that structure learning trains on. Systematically biased scoring will produce a biased graph regardless of concept quality. Scorer output must be exposed in run reports and be auditable.
 
-LLM scorer output is only one assignment source. For structured domains, deterministic mappers are usually preferable because they are cheaper, repeatable, and closer to the original POE DomainModule contract.
+LLM scorer output is only one assignment source. For structured domains, deterministic mappers are the default because they are cheaper, repeatable, and closer to the original POE DomainModule contract.
 
 ---
 

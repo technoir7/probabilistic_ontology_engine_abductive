@@ -67,11 +67,19 @@ The LLM client is provider-agnostic. `FireworksClient` uses Fireworks' OpenAI-co
 endpoint. To use a different OpenAI-compatible provider, subclass or replace `FireworksClient`
 in `src/poea/llm.py`.
 
-LLM scoring is the semantic fallback, not the default epistemic assumption.
-Structured numeric, API-derived, tabular, or already-assigned evidence should
-use deterministic assignment through `AssignmentRouter` and its direct or mapper
-backends. Prose-heavy evidence, such as art-market articles, still routes to the
-semantic scorer because it requires interpretation.
+LLM scoring is opt-in for semantic evidence, not the default epistemic
+assumption. Structured numeric, API-derived, tabular, or already-assigned
+evidence uses deterministic assignment through `AssignmentRouter` and its direct
+or mapper backends. POE-A reuses old POE deterministic mappers from the sibling
+`../probabilistic_ontology_engine/src/domains/` package where available,
+including macro, natural gas, AI, sovereign debt, credit cycle, energy, labor,
+crypto, geopolitics, and SF urban domains. Prose-heavy evidence, such as
+art-market articles, routes to the semantic scorer only when marked as
+`evidence_type: prose_text` / `unstructured_text` or equivalent.
+
+If structured evidence has no direct assignments and no deterministic mapper can
+be found, POE-A records an explicit assignment error instead of silently calling
+the LLM scorer.
 
 ## Development
 

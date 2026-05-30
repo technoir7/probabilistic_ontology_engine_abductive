@@ -14,6 +14,7 @@ from ..concepts.scorer import (
 )
 from ..evidence.schemas import EvidenceUnit
 from ..registry.schemas import ConceptEntry
+from .poe_compat import OldPOEMapperError, discover_old_poe_domain_mappers
 
 AssignmentMode = Literal["direct_structured", "deterministic", "semantic", "hybrid"]
 MapperResult = ScoredRecord | Sequence[ConceptAssignment] | Mapping[str, Any]
@@ -120,8 +121,14 @@ class DeterministicMapperBackend:
         self,
         mappers: Mapping[str, DeterministicMapper] | None = None,
         soft_observed_threshold: float = 0.5,
+        include_old_poe_mappers: bool = True,
     ) -> None:
-        self._mappers = dict(mappers or {})
+        self._mappers = (
+            discover_old_poe_domain_mappers()
+            if include_old_poe_mappers
+            else {}
+        )
+        self._mappers.update(mappers or {})
         self._soft_observed_threshold = soft_observed_threshold
         self._direct = DirectStructuredAssignmentBackend(
             soft_observed_threshold=soft_observed_threshold
@@ -152,7 +159,14 @@ class DeterministicMapperBackend:
             return ScoredRecord(evidence_id=evidence.evidence_id, assignments=assignments)
 
         mapper_id = str(
-            evidence.metadata.get("deterministic_mapper")
+            evidence.metadata.get("old_poe_domain")
+            or evidence.metadata.get("poe_domain")
+            or evidence.metadata.get("domain_id")
+            or evidence.metadata.get("domain_module_id")
+            or evidence.metadata.get("old_poe_mapper")
+            or evidence.metadata.get("poe_mapper")
+            or evidence.metadata.get("evidence_mapper")
+            or evidence.metadata.get("deterministic_mapper")
             or evidence.metadata.get("mapper_id")
             or evidence.domain_tag
         )
@@ -164,12 +178,19 @@ class DeterministicMapperBackend:
                 error=f"No deterministic mapper registered for '{mapper_id}'",
             )
 
-        return _coerce_mapper_result(
-            evidence=evidence,
-            concepts=concepts,
-            result=mapper(evidence, concepts),
-            soft_observed_threshold=self._soft_observed_threshold,
-        )
+        try:
+            return _coerce_mapper_result(
+                evidence=evidence,
+                concepts=concepts,
+                result=mapper(evidence, concepts),
+                soft_observed_threshold=self._soft_observed_threshold,
+            )
+        except OldPOEMapperError as exc:
+            return ScoredRecord(
+                evidence_id=evidence.evidence_id,
+                assignments=_neutral_assignments(list(concepts)),
+                error=str(exc),
+            )
 
 
 class SemanticLLMScorerBackend:
@@ -231,8 +252,9 @@ class AssignmentRouter:
     Deterministically route evidence records to assignment backends.
 
     The router never calls an LLM to decide whether an LLM should be used. It
-    uses explicit metadata first, then structural signals. Prose-heavy records
-    route to semantic scoring to preserve current art-market behavior.
+    uses explicit metadata first, then structural signals. Only explicit
+    prose/unstructured evidence routes to semantic scoring; unknown structured
+    records use deterministic mapping and fail loudly if no mapper exists.
     """
 
     def __init__(
@@ -257,6 +279,7 @@ class AssignmentRouter:
         *,
         soft_observed_threshold: float = 0.5,
         deterministic_mappers: Mapping[str, DeterministicMapper] | None = None,
+        include_old_poe_mappers: bool = True,
     ) -> "AssignmentRouter":
         direct = DirectStructuredAssignmentBackend(
             soft_observed_threshold=soft_observed_threshold
@@ -264,6 +287,7 @@ class AssignmentRouter:
         deterministic = DeterministicMapperBackend(
             mappers=deterministic_mappers,
             soft_observed_threshold=soft_observed_threshold,
+            include_old_poe_mappers=include_old_poe_mappers,
         )
         semantic = SemanticLLMScorerBackend(scorer)
         hybrid = HybridPrefilterScorerBackend(direct, semantic)
@@ -304,7 +328,7 @@ class AssignmentRouter:
             return self._decision(evidence, "direct_structured", f"evidence_type={evidence_type}")
         if evidence_type == "mixed":
             return self._decision(evidence, "hybrid", "evidence_type=mixed")
-        if evidence_type in {"prose", "prose_text", "article", "text"}:
+        if evidence_type in {"prose", "prose_text", "article", "text", "unstructured_text"}:
             return self._decision(evidence, "semantic", f"evidence_type={evidence_type}")
 
         if metadata.get("numeric_observations") or metadata.get("time_series"):
@@ -312,7 +336,7 @@ class AssignmentRouter:
         if metadata.get("requires_semantic_assignment") is True:
             return self._decision(evidence, "semantic", "requires_semantic_assignment=true")
 
-        return self._decision(evidence, "semantic", "default prose/semantic fallback")
+        return self._decision(evidence, "deterministic", "default deterministic route")
 
     def score_all(
         self,

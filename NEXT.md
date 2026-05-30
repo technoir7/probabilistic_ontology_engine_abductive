@@ -12,9 +12,12 @@ pipeline re-execution.
 
 Assignment architecture correction is complete: POE-A now has deterministic,
 direct-structured, semantic, and hybrid assignment backends behind
-`AssignmentRouter`. Structured domains can avoid LLM scoring when assignments
-or deterministic mappers are available. Art-market prose evidence continues to
-route to semantic scoring.
+`AssignmentRouter`. Structured domains use deterministic/direct assignment by
+default and can reuse old POE deterministic mappers from
+`../probabilistic_ontology_engine/src/domains/`. Semantic LLM scoring is opt-in
+for explicit prose/unstructured evidence. Art-market ingestion marks article
+evidence as prose, so current art behavior continues to route to semantic
+scoring.
 
 ---
 

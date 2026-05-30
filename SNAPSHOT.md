@@ -35,16 +35,30 @@ Implemented backends:
 | Backend | Use case | LLM calls |
 |---------|----------|----------:|
 | `DirectStructuredAssignmentBackend` | evidence metadata already contains concept assignments | 0 |
-| `DeterministicMapperBackend` | structured numeric/API/tabular evidence with a registered mapper or rule assignments | 0 |
-| `SemanticLLMScorerBackend` | prose-heavy evidence requiring interpretation | yes |
+| `DeterministicMapperBackend` | structured numeric/API/tabular evidence with a registered mapper, old POE mapper, or rule assignments | 0 |
+| `SemanticLLMScorerBackend` | explicitly prose-heavy evidence requiring interpretation | yes |
 | `HybridPrefilterScorerBackend` | mixed evidence; direct where possible, semantic fallback otherwise | conditional |
 
 `AssignmentRouter` is deterministic. It routes from explicit
 `assignment_mode`, `evidence_type`, and structured metadata. It does not use an
 LLM to decide whether to call an LLM.
 
-Current art-market prose evidence still routes to semantic scoring by default,
-preserving Phase 6 behavior and existing `scored_evidence.json` compatibility.
+Default route is deterministic/direct assignment. Semantic LLM scoring is
+opt-in via prose/unstructured evidence type. Current art-market ingestion marks
+article evidence as `prose_text`, preserving Phase 6 behavior and existing
+`scored_evidence.json` compatibility.
+
+Old POE deterministic mapper reuse is implemented through
+`OldPOEDomainMapperAdapter`, which lazily calls the sibling POE domain
+`*Pipeline.build_evidence_record` methods and translates old POE
+`EvidenceRecord` outputs into POE-A scored artifacts. Discovered old POE domains:
+`macro-regime-v1`, `natural-gas-v1`, `ai-regime-v1`, `sovereign-debt-v1`,
+`credit-cycle-v1`, `energy-regime-v1`, `labor-market-v1`, `crypto-regime-v1`,
+`geopolitics-v1`, and `sf-urban-v1`.
+
+If structured evidence lacks direct assignments and no deterministic mapper can
+be found, POE-A emits an explicit routing/error record instead of calling the
+LLM scorer.
 
 ---
 
@@ -163,8 +177,8 @@ The roadmap's next documented phase remains Phase 12, but the cost audit and
 POE architecture review identified a missing assignment abstraction: LLM scoring
 should not be the default for structured evidence. This change is an
 architecture correction to Phase 6 rather than a new roadmap phase. It preserves
-current art-market behavior while adding deterministic/direct assignment paths
-for future structured-domain runs.
+current art-market behavior through explicit prose metadata while reusing old
+POE deterministic mappers for structured-domain runs.
 
 ---
 
@@ -186,7 +200,7 @@ Domain ID used: `poea-induced-v1` (configurable via `configs/induction_config.ya
 ## Test Suite
 
 ```
-252 passed, 1 skipped
+256 passed, 1 skipped
 ```
 
 Latest verification also passed:

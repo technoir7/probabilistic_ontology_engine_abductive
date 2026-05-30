@@ -35,9 +35,12 @@ def normalize_record(
     # Preserve non-excluded, non-text fields as metadata for reference.
     skip = _EXCLUDED_FIELDS | {"title"} | set(_TEXT_FIELDS)
     metadata: dict[str, Any] = {k: v for k, v in raw.items() if k not in skip}
-    if not text_parts[1:]:
+    has_body_text = bool(text_parts[1:])
+    if not has_body_text:
         # Flag title-only records so callers can weight them appropriately.
         metadata["sparse_text"] = True
+    if "evidence_type" not in metadata and (has_body_text or domain_tag == "art"):
+        metadata["evidence_type"] = "prose_text"
 
     return EvidenceUnit(
         evidence_id=stable_evidence_id(source, title, text),

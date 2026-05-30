@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+from uuid import UUID
+
 from poea.assignments import (
     AssignmentRouter,
     DeterministicMapperBackend,
     DirectStructuredAssignmentBackend,
     HybridPrefilterScorerBackend,
+    OldPOEDomainMapperAdapter,
+    OldPOEDomainMapperSpec,
     SemanticLLMScorerBackend,
+    discover_old_poe_domain_mappers,
 )
 from poea.concepts.scorer import ConceptAssignment, ScoredRecord, ScoringStats
 from poea.evidence.schemas import EvidenceUnit
@@ -113,6 +119,101 @@ def test_structured_numeric_evidence_does_not_call_llm_scorer():
     assert result.stats.scored == 0
 
 
+def test_structured_economic_evidence_routes_to_old_poe_mapper_adapter(monkeypatch):
+    old_variable_id = UUID("11111111-1111-1111-1111-111111111111")
+    concept = ConceptEntry(
+        concept_id=str(old_variable_id),
+        name="LiquidityStress",
+        definition="Old POE macro variable.",
+        confidence=1.0,
+        supporting_evidence_ids=["ev001"],
+        status="active",
+    )
+    calls = {"count": 0}
+
+    class MockSnapshot:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class MockPipeline:
+        @staticmethod
+        def build_evidence_record(snapshot):
+            calls["count"] += 1
+            assert snapshot.kwargs == {"liquidity": "stress"}
+            return SimpleNamespace(
+                observed_assignments=[
+                    SimpleNamespace(
+                        variable_id=old_variable_id,
+                        observed_value=True,
+                        missingness="SOFT_OBSERVED",
+                        confidence=0.82,
+                    )
+                ]
+            )
+
+    pipeline_module = SimpleNamespace(MockPipeline=MockPipeline, MockSnapshot=MockSnapshot)
+    domain_module = SimpleNamespace(
+        get_variables=lambda: {
+            "LiquidityStress": SimpleNamespace(
+                variable_id=old_variable_id,
+                name="LiquidityStress",
+            )
+        }
+    )
+
+    def fake_import_module(name):
+        if name.endswith(".ingestion.pipeline"):
+            return pipeline_module
+        if name.endswith(".domain"):
+            return domain_module
+        raise ImportError(name)
+
+    monkeypatch.setattr("poea.assignments.poe_compat.importlib.import_module", fake_import_module)
+
+    adapter = OldPOEDomainMapperAdapter(
+        OldPOEDomainMapperSpec(
+            domain_id="macro-regime-v1",
+            package="macro_regime_v1",
+            pipeline_class="MockPipeline",
+            snapshot_class="MockSnapshot",
+        )
+    )
+    fake_scorer = FakeSemanticScorer()
+    direct = DirectStructuredAssignmentBackend()
+    semantic = SemanticLLMScorerBackend(fake_scorer)  # type: ignore[arg-type]
+    deterministic = DeterministicMapperBackend(
+        {"macro-regime-v1": adapter},
+        include_old_poe_mappers=False,
+    )
+    router = AssignmentRouter(
+        direct_backend=direct,
+        deterministic_backend=deterministic,
+        semantic_backend=semantic,
+        hybrid_backend=HybridPrefilterScorerBackend(direct, semantic),
+    )
+    evidence = [
+        _evidence(
+            "ev001",
+            metadata={
+                "evidence_type": "structured_numeric",
+                "old_poe_domain": "macro-regime-v1",
+                "old_poe_snapshot": {"liquidity": "stress"},
+            },
+        )
+    ]
+
+    result = router.score_all(evidence, [concept])
+
+    assert calls["count"] == 1
+    assert fake_scorer.calls == 0
+    assignment = result.records[0].assignments[0]
+    assert assignment.concept_id == str(old_variable_id)
+    assert assignment.variable_name == "LiquidityStress"
+    assert assignment.assigned_value is True
+    assert assignment.missingness == "SOFT_OBSERVED"
+    assert assignment.confidence == 0.82
+
+
 def test_prose_evidence_routes_to_semantic_scoring():
     concepts = [_concept("AuctionCatalyst")]
     evidence = [_evidence("ev001", metadata={"evidence_type": "prose_text"})]
@@ -164,6 +265,49 @@ def test_router_decisions_are_deterministic():
     assert {d.mode for d in decisions} == {"hybrid"}
     assert {d.backend for d in decisions} == {"hybrid_prefilter"}
     assert {d.reason for d in decisions} == {"evidence_type=mixed"}
+
+
+def test_unknown_structured_evidence_fails_loudly_without_llm():
+    concept = _concept("LiquidityStress")
+    evidence = [_evidence("ev001", metadata={"evidence_type": "structured_numeric"})]
+    fake_scorer = FakeSemanticScorer()
+
+    result = _router(fake_scorer).score_all(evidence, [concept])
+
+    assert fake_scorer.calls == 0
+    assert result.records[0].error == "No deterministic mapper registered for 'test'"
+    assert result.records[0].assignments[0].assigned_value is None
+    assert result.stats.errors == 1
+    assert result.metadata["mode_counts"] == {"deterministic": 1}
+
+
+def test_untyped_evidence_defaults_to_deterministic_not_llm():
+    concept = _concept("LiquidityStress")
+    evidence = [_evidence("ev001", metadata={})]
+    fake_scorer = FakeSemanticScorer()
+
+    result = _router(fake_scorer).score_all(evidence, [concept])
+
+    assert fake_scorer.calls == 0
+    assert result.records[0].error == "No deterministic mapper registered for 'test'"
+
+
+def test_old_poe_mapper_discovery_includes_structured_domains():
+    mappers = discover_old_poe_domain_mappers()
+
+    for domain in (
+        "macro-regime-v1",
+        "natural-gas-v1",
+        "ai-regime-v1",
+        "sovereign-debt-v1",
+        "credit-cycle-v1",
+        "energy-regime-v1",
+        "labor-market-v1",
+        "crypto-regime-v1",
+        "geopolitics-v1",
+        "sf-urban-v1",
+    ):
+        assert domain in mappers
 
 
 def test_existing_cache_is_reused_before_routing_to_semantic():
