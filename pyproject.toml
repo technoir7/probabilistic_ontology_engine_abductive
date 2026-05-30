@@ -1,0 +1,37 @@
+[project]
+name = "poea"
+version = "0.1.0"
+description = "Probabilistic Ontology Engine Abductive"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.0",
+    "typer>=0.12",
+    "rich>=13.0",
+    "openai>=1.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+poea = "poea.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/poea"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "live: marks tests that call live LLM APIs (excluded from default runs)",
+]
+
+[tool.ruff]
+src = ["src"]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]

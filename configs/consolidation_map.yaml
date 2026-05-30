@@ -1,0 +1,33 @@
+# Consolidation map for the art domain induction run (raw_concepts.json).
+#
+# Derived from the analysis in CONCEPT_QUALITY_REPORT.md.
+#
+# Two semantic clusters were identified:
+#
+# 1. Flight-to-Quality — four variants of the same mechanism (capital
+#    concentration in established works during uncertainty).  The convergent
+#    name used in batches 2 and 5 is the canonical.
+#
+# 2. Institutional Validation — four variants of the mechanism by which
+#    museum, gallery, or biennial endorsement drives market demand and price.
+#
+# Two concepts are rejected as too event-specific to be durable ontology nodes.
+
+clusters:
+  - canonical: FlightToQualityConcentration
+    members:
+      - FlightToQualityConcentration
+      - PrestigeMarketAnchoring
+      - FlightToQualityInArtMarket
+
+  - canonical: InstitutionalValidationPremium
+    members:
+      - InstitutionalValidationPremium
+      - InstitutionalValidationEffect
+      - InstitutionalExhibitionPremium
+
+rejected:
+  # Driven by a single Matisse exhibition; not a durable structural factor.
+  - HistoricalControversyAsPrestigeAmplifier
+  # Dinosaur fossils + prediction markets — too time-specific for 2026 news.
+  - HybridAssetMarketConvergence

@@ -1,0 +1,46 @@
+[
+  {
+    "title": "Auction Sales Hit Record at Spring Contemporary Sale",
+    "url": "https://example.com/auction-spring-2026",
+    "published_at": "2026-04-15",
+    "notes": "Spring contemporary auction totals exceeded estimates by 40%. Blue-chip works by established post-war artists drove results above reserve. Secondary market demand concentrated in price tier above $500k. Emerging artist lots showed weak bidding with multiple buy-ins. Several lots carried guarantees from third-party irrevocable bids.",
+    "assignments": {
+      "BlueChipConcentration": {
+        "value": true,
+        "confidence": 0.85,
+        "rationale": "Blue-chip lots outperformed."
+      },
+      "AuctionSpeculationElevated": {
+        "value": true,
+        "confidence": 0.72,
+        "rationale": "Guaranteed lots and above-estimate results."
+      }
+    },
+    "causal_claims": [
+      {
+        "cause": "BlueChipConcentration",
+        "effect": "AuctionSpeculationElevated",
+        "polarity": "positive",
+        "confidence": 0.61
+      }
+    ]
+  },
+  {
+    "title": "Gallery Closures Accelerate as Rent and Fair Costs Rise",
+    "url": "https://example.com/gallery-closures-2026",
+    "published_at": "2026-03-10",
+    "notes": "Mid-tier galleries reported unsustainable cost structures driven by art fair participation fees and rising urban rents. Several long-established galleries announced closure or downsizing. Galleries with primary market focus reported difficulty placing works above $50k without auction track record. Fair fatigue reported by dealers as contributing to diminishing collector attendance.",
+    "assignments": {
+      "DealerMarginCompression": {
+        "value": true,
+        "confidence": 0.78,
+        "rationale": "Cost increases reducing dealer margins."
+      }
+    }
+  },
+  {
+    "title": "Title-Only Record With No Notes",
+    "url": "https://example.com/brief-item",
+    "published_at": "2026-05-01"
+  }
+]

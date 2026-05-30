@@ -1,0 +1,33 @@
+models:
+  induction: accounts/fireworks/models/deepseek-v4-pro
+  scoring: accounts/fireworks/models/deepseek-v4-pro
+
+# Live induction/scoring requires:  export FIREWORKS_API_KEY=your-key-here
+
+scoring:
+  soft_observed_threshold: 0.5   # confidence below this → SOFT_OBSERVED instead of OBSERVED
+  max_tokens: 2048
+
+batching:
+  min_records: 5
+  max_records: 10
+
+concepts:
+  min_confidence: 0.4
+  promotion_confidence: 0.75
+  min_supporting_evidence: 2
+  max_active_concepts: 30
+  dedupe_similarity: 0.85
+
+registry:
+  default_status: candidate
+  allow_auto_promotion: true
+  never_delete: true
+
+backend:
+  default: null
+  poe_path: ../probabilistic_ontology_engine
+
+validation:
+  latent_alignment_threshold: 0.3
+  retain_ungrounded_high_confidence: true

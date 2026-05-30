@@ -1,0 +1,22 @@
+{
+  "concepts": [
+    {
+      "name": "PriceConcentrationEffect",
+      "definition": "The tendency for market value to cluster at the high end of the price distribution while the middle and low tiers experience weak demand. Causes divergent performance across market segments and creates perceived scarcity for trophy assets.",
+      "confidence": 0.82,
+      "supporting_evidence_ids": ["abc123def456"]
+    },
+    {
+      "name": "OperationalMarginPressure",
+      "definition": "Rising fixed costs for galleries and dealers driven by art fair participation fees, staffing, and prime real estate. Forces consolidation among mid-tier operators and reduces viability of primary-market-only business models.",
+      "confidence": 0.76,
+      "supporting_evidence_ids": ["abc123def456", "def456abc789"]
+    },
+    {
+      "name": "AuctionGuaranteeMechanism",
+      "definition": "Third-party irrevocable bids that provide downside protection for sellers and shift risk to guarantors. Compresses price discovery by removing lots from open bidding competition and inflates apparent demand.",
+      "confidence": 0.71,
+      "supporting_evidence_ids": ["abc123def456"]
+    }
+  ]
+}

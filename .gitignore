@@ -1,0 +1,12 @@
+artifacts/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+*.egg-info/
+.env
+.ruff_cache/
+.pytest_cache/

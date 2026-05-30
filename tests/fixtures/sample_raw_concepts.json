@@ -1,0 +1,45 @@
+{
+  "model": "test-model",
+  "evidence_count": 11,
+  "batch_count": 2,
+  "concept_count": 6,
+  "errors": [],
+  "concepts": [
+    {
+      "name": "AlphaMechanism",
+      "definition": "Alpha definition (first proposal).",
+      "confidence": 0.90,
+      "supporting_evidence_ids": ["ev001", "ev002"]
+    },
+    {
+      "name": "BetaMechanism",
+      "definition": "Beta definition.",
+      "confidence": 0.80,
+      "supporting_evidence_ids": ["ev003", "ev004"]
+    },
+    {
+      "name": "GammaMechanism",
+      "definition": "Gamma definition — single evidence record.",
+      "confidence": 0.80,
+      "supporting_evidence_ids": ["ev005"]
+    },
+    {
+      "name": "DeltaMechanism",
+      "definition": "Delta definition — will be merged into Alpha.",
+      "confidence": 0.75,
+      "supporting_evidence_ids": ["ev006", "ev007"]
+    },
+    {
+      "name": "EpsilonMechanism",
+      "definition": "Epsilon definition — will be rejected.",
+      "confidence": 0.85,
+      "supporting_evidence_ids": ["ev008", "ev009"]
+    },
+    {
+      "name": "AlphaMechanism",
+      "definition": "Alpha definition (second proposal, slightly different).",
+      "confidence": 0.85,
+      "supporting_evidence_ids": ["ev010", "ev011"]
+    }
+  ]
+}
