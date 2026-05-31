@@ -16,8 +16,11 @@ from poea.backends.poe_backend import (
     _build_cooccurrence_edges,
     _build_graph_artifact,
     _build_variables,
+    _edge_existence_label,
     _import_poe,
+    _run_entropy_diagnostics,
     _run_posterior_query,
+    _run_structure_diagnostics,
     _translate_scored_evidence,
 )
 
@@ -565,6 +568,186 @@ def test_build_graph_artifact_embeds_posterior_inference():
         posterior_inference=fake_posteriors,
     )
     assert artifact["posterior_inference"] == fake_posteriors
+
+
+# ---------------------------------------------------------------------------
+# Structure diagnostics (old POE build_structure_diagnostics)
+# ---------------------------------------------------------------------------
+
+def test_graph_artifact_contains_structure_diagnostics_key():
+    """Graph artifact always has structure_diagnostics key after learn_graph."""
+    concepts = [_make_concept("Alpha"), _make_concept("Beta")]
+    backend = POEBackend(db_path=":memory:", random_seed=42)
+    graph = backend.learn_graph(concepts, [])
+    assert "structure_diagnostics" in graph
+
+
+def test_structure_diagnostics_present_with_evidence():
+    """Structure diagnostics contains candidate BIC data when evidence is provided."""
+    concepts = [_make_concept("Alpha"), _make_concept("Beta")]
+    scored = [
+        _make_scored_record("ev001", [
+            _make_assignment("Alpha", True, "OBSERVED", 0.9),
+            _make_assignment("Beta", True, "OBSERVED", 0.8),
+        ]),
+        _make_scored_record("ev002", [
+            _make_assignment("Alpha", False, "OBSERVED", 0.85),
+            _make_assignment("Beta", False, "OBSERVED", 0.75),
+        ]),
+    ]
+    backend = POEBackend(db_path=":memory:", random_seed=42)
+    graph = backend.learn_graph(concepts, scored)
+
+    diags = graph.get("structure_diagnostics", {})
+    assert isinstance(diags, dict)
+    assert "candidates" in diags
+    candidates = diags["candidates"]
+    assert len(candidates) >= 1
+
+
+def test_structure_diagnostics_delegates_to_old_poe():
+    """method field confirms delegation to old POE build_structure_diagnostics."""
+    concepts = [_make_concept("Alpha"), _make_concept("Beta")]
+    scored = [
+        _make_scored_record("ev001", [
+            _make_assignment("Alpha", True, "OBSERVED", 0.9),
+        ]),
+    ]
+    backend = POEBackend(db_path=":memory:", random_seed=42)
+    graph = backend.learn_graph(concepts, scored)
+
+    diags = graph.get("structure_diagnostics", {})
+    assert diags.get("method") == "old_poe_build_structure_diagnostics"
+
+
+def test_structure_diagnostics_has_bic_fields():
+    """Each candidate in structure diagnostics has BIC decomposition fields."""
+    concepts = [_make_concept("Alpha"), _make_concept("Beta")]
+    scored = [
+        _make_scored_record("ev001", [
+            _make_assignment("Alpha", True, "OBSERVED", 0.9),
+            _make_assignment("Beta", False, "OBSERVED", 0.8),
+        ]),
+    ]
+    backend = POEBackend(db_path=":memory:", random_seed=42)
+    graph = backend.learn_graph(concepts, scored)
+
+    diags = graph.get("structure_diagnostics", {})
+    candidates = diags.get("candidates", [])
+    assert len(candidates) >= 1
+    first = candidates[0]
+    for field in ("avg_ll", "bic_score_strict", "bic_score_explore", "is_dominant"):
+        assert field in first, f"Missing field {field!r} in candidate"
+
+
+def test_run_structure_diagnostics_returns_empty_for_empty_population():
+    """_run_structure_diagnostics gracefully handles no candidates."""
+    from src.engine.schemas import OntologyPopulation
+    pop = OntologyPopulation(domain_module_id="test-domain")
+    result = _run_structure_diagnostics(pop, evidence_count=0)
+    # Either empty dict or has candidates list
+    assert isinstance(result, dict)
+
+
+# ---------------------------------------------------------------------------
+# Entropy diagnostics (old POE build_entropy_diagnostics)
+# ---------------------------------------------------------------------------
+
+def test_graph_artifact_contains_entropy_diagnostics_key():
+    """Graph artifact always has entropy_diagnostics key after learn_graph."""
+    concepts = [_make_concept("Alpha"), _make_concept("Beta")]
+    backend = POEBackend(db_path=":memory:", random_seed=42)
+    graph = backend.learn_graph(concepts, [])
+    assert "entropy_diagnostics" in graph
+
+
+def test_entropy_diagnostics_present_with_evidence():
+    """Entropy diagnostics is populated when evidence records exist."""
+    concepts = [_make_concept("Alpha"), _make_concept("Beta")]
+    scored = [
+        _make_scored_record("ev001", [
+            _make_assignment("Alpha", True, "OBSERVED", 0.9),
+            _make_assignment("Beta", True, "OBSERVED", 0.8),
+        ]),
+        _make_scored_record("ev002", [
+            _make_assignment("Alpha", False, "OBSERVED", 0.85),
+            _make_assignment("Beta", False, "OBSERVED", 0.75),
+        ]),
+    ]
+    backend = POEBackend(db_path=":memory:", random_seed=42)
+    graph = backend.learn_graph(concepts, scored)
+
+    diags = graph.get("entropy_diagnostics", {})
+    assert isinstance(diags, dict)
+    assert "variables" in diags
+    assert "top_mutual_information_pairs" in diags
+
+
+def test_entropy_diagnostics_delegates_to_old_poe():
+    """method field confirms delegation to old POE build_entropy_diagnostics."""
+    concepts = [_make_concept("Alpha"), _make_concept("Beta")]
+    scored = [
+        _make_scored_record("ev001", [
+            _make_assignment("Alpha", True, "OBSERVED", 0.9),
+            _make_assignment("Beta", True, "OBSERVED", 0.8),
+        ]),
+    ]
+    backend = POEBackend(db_path=":memory:", random_seed=42)
+    graph = backend.learn_graph(concepts, scored)
+
+    diags = graph.get("entropy_diagnostics", {})
+    assert diags.get("method") == "old_poe_build_entropy_diagnostics"
+
+
+def test_entropy_diagnostics_per_variable_has_entropy_field():
+    """Per-variable data includes entropy value."""
+    concepts = [_make_concept("Alpha"), _make_concept("Beta")]
+    scored = [
+        _make_scored_record("ev001", [
+            _make_assignment("Alpha", True, "OBSERVED", 0.9),
+            _make_assignment("Beta", True, "OBSERVED", 0.8),
+        ]),
+        _make_scored_record("ev002", [
+            _make_assignment("Alpha", False, "OBSERVED", 0.8),
+        ]),
+    ]
+    backend = POEBackend(db_path=":memory:", random_seed=42)
+    graph = backend.learn_graph(concepts, scored)
+
+    diags = graph.get("entropy_diagnostics", {})
+    variables = diags.get("variables", {})
+    assert "Alpha" in variables
+    assert "entropy" in variables["Alpha"]
+
+
+def test_run_entropy_diagnostics_returns_empty_for_no_records():
+    """_run_entropy_diagnostics returns empty dict when records is empty."""
+    result = _run_entropy_diagnostics([], [])
+    assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# Edge existence label
+# ---------------------------------------------------------------------------
+
+def test_edge_existence_label_accepted():
+    assert _edge_existence_label(0.95, 0.05, 0.90, 0.3, 0.7) == "accepted"
+
+
+def test_edge_existence_label_pruning():
+    assert _edge_existence_label(0.03, 0.05, 0.90, 0.3, 0.7) == "pruning"
+
+
+def test_edge_existence_label_frontier():
+    assert _edge_existence_label(0.50, 0.05, 0.90, 0.3, 0.7) == "frontier"
+
+
+def test_edge_existence_label_tending_toward_pruning():
+    assert _edge_existence_label(0.15, 0.05, 0.90, 0.3, 0.7) == "tending_toward_pruning"
+
+
+def test_edge_existence_label_tending_toward_acceptance():
+    assert _edge_existence_label(0.80, 0.05, 0.90, 0.3, 0.7) == "tending_toward_acceptance"
 
 
 # ---------------------------------------------------------------------------

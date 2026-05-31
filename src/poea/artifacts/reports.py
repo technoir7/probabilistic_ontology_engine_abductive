@@ -112,6 +112,9 @@ def write_run_report(
     _append_sample_scorer_outputs(lines, evidence, scored)
     _append_graph_summary(lines, graph, inferred_backend)
     _append_posterior_inference(lines, graph)
+    _append_variable_uncertainty(lines, graph)
+    _append_structure_diagnostics(lines, graph)
+    _append_entropy_diagnostics(lines, graph)
     _append_backend_candidates(lines, graph)
     _append_warnings(lines, all_warnings)
     _append_timestamps(lines, raw_concepts, registry, canonical, scored, nodes, graph)
@@ -492,6 +495,206 @@ def _append_posterior_inference(lines: list[str], graph: Any) -> None:
         lines.append(f"- Dominant log-score: {_format_float(pop_summary.get('dominant_score', 0.0))}")
         lines.append(f"- Structure entropy: {_format_float(pop_summary.get('structure_entropy', 0.0))}")
         lines.append(f"- Paradigm shift count: {pop_summary.get('paradigm_shift_count', 0)}")
+        lines.append("")
+
+
+def _append_variable_uncertainty(lines: list[str], graph: Any) -> None:
+    """
+    Rank variables by uncertainty using old POE posterior marginals.
+
+    Uncertainty = |P(True) - 0.5|.  Value of 0.0 = maximum uncertainty (P=0.5);
+    value of 0.5 = maximum certainty (P=0 or P=1).  No new inference is
+    performed; this is presentation-only arithmetic over old POE posteriors.
+    """
+    lines.append("## Variable Uncertainty Ranking (Old POE Posteriors)")
+    lines.append("")
+    if not isinstance(graph, dict):
+        lines.append("- Graph artifact not present.")
+        lines.append("")
+        return
+
+    inference = graph.get("posterior_inference", {})
+    posteriors = inference.get("posteriors", {}) if isinstance(inference, dict) else {}
+    if not posteriors:
+        lines.append("- No posterior inference results available.")
+        lines.append("  Run with `--backend poe` to produce posterior inference.")
+        lines.append("")
+        return
+
+    rows = []
+    for name, dist in posteriors.items():
+        p_true = float(dist.get("True", dist.get("true", 0.5)))
+        p_false = float(dist.get("False", dist.get("false", 0.5)))
+        certainty = abs(p_true - 0.5)
+        if p_true > p_false + 0.05:
+            direction = "active"
+        elif p_false > p_true + 0.05:
+            direction = "absent"
+        else:
+            direction = "uncertain"
+        rows.append((certainty, name, p_true, p_false, direction))
+
+    rows.sort(key=lambda r: r[0])  # most uncertain first
+
+    lines.append("Sorted by uncertainty (most uncertain first).")
+    lines.append("Certainty = |P(True) − 0.5|: 0.00 = maximum uncertainty, 0.50 = certain.")
+    lines.append("")
+    lines.append("| Concept | P(True) | P(False) | Direction | Certainty |")
+    lines.append("| --- | ---: | ---: | --- | ---: |")
+    for certainty, name, p_true, p_false, direction in rows:
+        lines.append(
+            f"| {_escape(name)} | {p_true:.4f} | {p_false:.4f} | {direction} | {certainty:.4f} |"
+        )
+    lines.append("")
+
+
+def _append_structure_diagnostics(lines: list[str], graph: Any) -> None:
+    """
+    Display old POE BIC decomposition per candidate.
+
+    Source: old POE build_structure_diagnostics() via poe_backend._run_structure_diagnostics().
+    No new scoring is performed by POE-A.
+    """
+    lines.append("## Structure Diagnostics (Old POE BIC Decomposition)")
+    lines.append("")
+    if not isinstance(graph, dict):
+        lines.append("- Graph artifact not present.")
+        lines.append("")
+        return
+
+    diags = graph.get("structure_diagnostics", {})
+    if not isinstance(diags, dict) or not diags:
+        lines.append("- No structure diagnostics in graph artifact.")
+        lines.append("  (Run with `--backend poe` to produce structure diagnostics.)")
+        lines.append("")
+        return
+    if "error" in diags:
+        lines.append(f"- Old POE structure diagnostics error: `{diags['error']}`")
+        lines.append("")
+        return
+
+    method = diags.get("method", "unknown")
+    n = diags.get("total_evidence_records", 0)
+    lines.append(f"- Method: `{method}`")
+    lines.append(f"- Total evidence records: {n}")
+    lines.append("- Source: old POE `build_structure_diagnostics()` → `structure_diagnostics.py`")
+    lines.append("")
+    lines.append(
+        "_avg\\_ll = log\\_score / evidence\\_count. "
+        "BIC strict uses full penalty (penalises complexity). "
+        "BIC explore uses 0.25× penalty (reveals if richer structures would win)._"
+    )
+    lines.append("")
+
+    candidates = diags.get("candidates", [])
+    if not candidates:
+        lines.append("- No candidate data.")
+        lines.append("")
+        return
+
+    lines.append("| Candidate | Dom | Status | Evidence | avg\\_ll | BIC strict | BIC explore | Active edges |")
+    lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |")
+    for c in candidates:
+        dom_mark = "★" if c.get("is_dominant") else ""
+        lines.append(
+            "| `{cid}` | {dom} | {status} | {ev} | {avg_ll} | {strict} | {explore} | {edges} |".format(
+                cid=str(c.get("candidate_id", ""))[:8],
+                dom=dom_mark,
+                status=_escape(str(c.get("status", ""))),
+                ev=c.get("evidence_count", 0),
+                avg_ll=_format_float(c.get("avg_ll", 0)),
+                strict=_format_float(c.get("bic_score_strict", 0)),
+                explore=_format_float(c.get("bic_score_explore", 0)),
+                edges=c.get("active_edge_count", 0),
+            )
+        )
+    lines.append("")
+
+    # Show dominant candidate's edges with context labels
+    dominant = next((c for c in candidates if c.get("is_dominant")), None)
+    if dominant and dominant.get("edges"):
+        lines.append("### Dominant Candidate Edges")
+        lines.append("")
+        lines.append("| Parent | Child | Label |")
+        lines.append("| --- | --- | --- |")
+        for edge in dominant["edges"]:
+            lines.append(
+                f"| {_escape(edge.get('parent', ''))} | {_escape(edge.get('child', ''))} "
+                f"| {edge.get('label', '')} |"
+            )
+        lines.append("")
+
+
+def _append_entropy_diagnostics(lines: list[str], graph: Any) -> None:
+    """
+    Display old POE evidence entropy and mutual information diagnostics.
+
+    Source: old POE build_entropy_diagnostics() via poe_backend._run_entropy_diagnostics().
+    No entropy computation is performed by POE-A.
+    """
+    lines.append("## Evidence Entropy and Mutual Information (Old POE)")
+    lines.append("")
+    if not isinstance(graph, dict):
+        lines.append("- Graph artifact not present.")
+        lines.append("")
+        return
+
+    diags = graph.get("entropy_diagnostics", {})
+    if not isinstance(diags, dict) or not diags:
+        lines.append("- No entropy diagnostics in graph artifact.")
+        lines.append("  (Run with `--backend poe` to produce entropy diagnostics.)")
+        lines.append("")
+        return
+    if "error" in diags:
+        lines.append(f"- Old POE entropy diagnostics error: `{diags['error']}`")
+        lines.append("")
+        return
+
+    method = diags.get("method", "unknown")
+    n = diags.get("total_evidence_rows", 0)
+    lines.append(f"- Method: `{method}`")
+    lines.append(f"- Total evidence rows: {n}")
+    lines.append("- Source: old POE `build_entropy_diagnostics()` → `evidence_diagnostics.py`")
+    lines.append("")
+
+    variables = diags.get("variables", {})
+    if variables:
+        lines.append("### Per-Variable Entropy")
+        lines.append("")
+        lines.append("_Shannon entropy in bits. 0.0 = constant variable (no information). 1.0 = maximally mixed._")
+        lines.append("")
+        lines.append("| Concept | Observed | Missing | Entropy |")
+        lines.append("| --- | ---: | ---: | ---: |")
+        sorted_vars = sorted(variables.items(), key=lambda x: -x[1].get("entropy", 0))
+        for name, vstats in sorted_vars:
+            lines.append(
+                "| {name} | {obs} | {miss} | {ent:.4f} |".format(
+                    name=_escape(name),
+                    obs=vstats.get("observed_count", 0),
+                    miss=vstats.get("missing_count", 0),
+                    ent=float(vstats.get("entropy", 0.0) or 0.0),
+                )
+            )
+        lines.append("")
+
+    mi_pairs = diags.get("top_mutual_information_pairs", [])
+    if mi_pairs:
+        lines.append("### Top Variable Pairs by Mutual Information")
+        lines.append("")
+        lines.append("_Higher MI = stronger empirical co-occurrence. Suggests plausible edge direction._")
+        lines.append("")
+        lines.append("| Variable X | Variable Y | Jointly Observed | MI (bits) |")
+        lines.append("| --- | --- | ---: | ---: |")
+        for pair in mi_pairs[:8]:
+            mi = float(pair.get("mutual_information", 0.0) or 0.0)
+            lines.append(
+                "| {x} | {y} | {n} | {mi:.4f} |".format(
+                    x=_escape(str(pair.get("variable_x", ""))),
+                    y=_escape(str(pair.get("variable_y", ""))),
+                    n=pair.get("joint_observed_count", 0),
+                    mi=mi,
+                )
+            )
         lines.append("")
 
 

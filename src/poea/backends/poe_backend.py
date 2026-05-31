@@ -16,6 +16,8 @@ Dependency boundary — POE-A imports only:
                                ObservedAssignment, DependencyEdge, DomainType,
                                MissingnessType, SourceType, EdgeExistenceThresholdConfig
     src.engine.variable_identity — stable_variable_id
+    src.engine.services.structure_diagnostics — build_structure_diagnostics (pure)
+    src.engine.services.evidence_diagnostics  — build_entropy_diagnostics (pure)
 
 No POE domain internals, no POE art-domain code, no copied POE source.
 """
@@ -247,8 +249,14 @@ class POEBackend:
         # 6b. Run old POE posterior inference (delegates entirely to engine.query())
         posterior_inference = _run_posterior_query(engine, variables, self._domain_id)
 
-        # 7. Extract graph artifact
+        # 6c. Run old POE structure diagnostics (pure function, no side effects)
         population = engine.get_population(self._domain_id)
+        structure_diagnostics = _run_structure_diagnostics(population, len(records))
+
+        # 6d. Run old POE evidence entropy diagnostics (pure function, no side effects)
+        entropy_diagnostics = _run_entropy_diagnostics(records, variables)
+
+        # 7. Extract graph artifact
         return _build_graph_artifact(
             population=population,
             fallback_variables=variables,
@@ -256,6 +264,8 @@ class POEBackend:
             evidence_count=len(records),
             snapshot=snapshot,
             posterior_inference=posterior_inference,
+            structure_diagnostics=structure_diagnostics,
+            entropy_diagnostics=entropy_diagnostics,
         )
 
     def score_hypotheses(
@@ -469,6 +479,147 @@ def _run_posterior_query(engine: Any, variables: list, domain_id: str) -> dict[s
         return {"error": str(exc)}
 
 
+def _run_structure_diagnostics(population: Any, evidence_count: int) -> dict[str, Any]:
+    """
+    Run old POE structure-learning diagnostics immediately after learning.
+
+    Delegates entirely to build_structure_diagnostics() from old POE's
+    services/structure_diagnostics.py — a pure function with no side effects.
+    Returns BIC decomposition per candidate (avg_ll, strict BIC, explore BIC,
+    edge structure).  POE-A performs no scoring computation here.
+    """
+    try:
+        from src.engine.services.structure_diagnostics import build_structure_diagnostics
+    except ImportError:
+        logger.warning("Old POE structure_diagnostics not importable; skipping")
+        return {}
+
+    try:
+        diags = build_structure_diagnostics(
+            pop=population,
+            mutation_stats={},
+            total_evidence_records=evidence_count,
+            env_mode="strict",
+            env_bic_multiplier=1.0,
+        )
+        prune_threshold = 0.05
+        accept_threshold = 0.90
+        explore_lo, explore_hi = 0.3, 0.7
+        candidates_out = []
+        for cd in diags.candidates:
+            candidates_out.append({
+                "candidate_id": cd.candidate_id,
+                "description": cd.description,
+                "generation": cd.generation,
+                "status": cd.status,
+                "is_dominant": cd.is_dominant,
+                "evidence_count": cd.evidence_count,
+                "log_score": cd.log_score,
+                "avg_ll": cd.avg_ll,
+                "bic_penalty_raw": cd.bic_penalty_raw,
+                "bic_score_strict": cd.bic_score_strict,
+                "bic_score_explore": cd.bic_score_explore,
+                "active_edge_count": cd.active_edge_count,
+                "total_edge_count": cd.total_edge_count,
+                "edges": [
+                    {
+                        "parent": parent,
+                        "child": child,
+                        "label": _edge_existence_label(
+                            next(
+                                (
+                                    e.existence_probability
+                                    for cand in population.candidates
+                                    if str(cand.candidate_id) == cd.candidate_id
+                                    for e in cand.get_active_edges()
+                                    if (cand.get_variable_by_id(e.parent_variable_id) or type("", (), {"name": ""})()).name == parent
+                                    and (cand.get_variable_by_id(e.child_variable_id) or type("", (), {"name": ""})()).name == child
+                                ),
+                                0.5,
+                            ),
+                            prune_threshold,
+                            accept_threshold,
+                            explore_lo,
+                            explore_hi,
+                        ),
+                    }
+                    for parent, child in cd.edge_structure
+                ],
+            })
+        logger.info(
+            "Old POE structure diagnostics complete — %d candidates", len(candidates_out)
+        )
+        return {
+            "method": "old_poe_build_structure_diagnostics",
+            "env_mode": diags.env_mode,
+            "total_evidence_records": diags.total_evidence_records,
+            "candidates": candidates_out,
+        }
+    except Exception as exc:
+        logger.warning("Old POE structure diagnostics failed: %s", exc)
+        return {"error": str(exc)}
+
+
+def _edge_existence_label(
+    p: float,
+    prune_below: float,
+    accept_above: float,
+    explore_lo: float,
+    explore_hi: float,
+) -> str:
+    """Return a human-readable label for an edge's existence probability."""
+    if p >= accept_above:
+        return "accepted"
+    if p <= prune_below:
+        return "pruning"
+    if explore_lo <= p <= explore_hi:
+        return "frontier"
+    if p < explore_lo:
+        return "tending_toward_pruning"
+    return "tending_toward_acceptance"
+
+
+def _run_entropy_diagnostics(records: list, variables: list) -> dict[str, Any]:
+    """
+    Run old POE evidence entropy and mutual information diagnostics.
+
+    Delegates entirely to build_entropy_diagnostics() from old POE's
+    services/evidence_diagnostics.py — a pure function with no side effects.
+    Returns per-variable entropy, observed counts, and pairwise MI.
+    POE-A performs no entropy computation here.
+    """
+    if not records or not variables:
+        return {}
+
+    try:
+        from src.engine.services.evidence_diagnostics import build_entropy_diagnostics
+    except ImportError:
+        logger.warning("Old POE evidence_diagnostics not importable; skipping")
+        return {}
+
+    try:
+        diags = build_entropy_diagnostics(records, variables)
+        logger.info(
+            "Old POE entropy diagnostics complete — %d variables, %d records",
+            len(variables),
+            len(records),
+        )
+        # Extract top MI pairs for the artifact (full list can be large)
+        mi_pairs = sorted(
+            diags.get("pairwise_mutual_information", []),
+            key=lambda x: -x.get("mutual_information", 0),
+        )
+        return {
+            "method": "old_poe_build_entropy_diagnostics",
+            "total_evidence_rows": diags.get("total_evidence_rows", len(records)),
+            "variables": diags.get("variables", {}),
+            "top_mutual_information_pairs": mi_pairs[:10],
+        }
+    except Exception as exc:
+        logger.warning("Old POE entropy diagnostics failed: %s", exc)
+        return {"error": str(exc)}
+
+
 def _build_graph_artifact(
     population: Any,
     fallback_variables: list,
@@ -476,6 +627,8 @@ def _build_graph_artifact(
     evidence_count: int,
     snapshot: Any,
     posterior_inference: dict[str, Any] | None = None,
+    structure_diagnostics: dict[str, Any] | None = None,
+    entropy_diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Extract a POE-A graph artifact from a POE OntologyPopulation.
@@ -549,6 +702,8 @@ def _build_graph_artifact(
             "dominant_log_score": max((c.log_score for c in active), default=0.0),
         },
         "posterior_inference": posterior_inference or {},
+        "structure_diagnostics": structure_diagnostics or {},
+        "entropy_diagnostics": entropy_diagnostics or {},
         "metadata": {
             "created_at": now,
             "evidence_count": evidence_count,

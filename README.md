@@ -131,6 +131,31 @@ poea pipeline         Run evidence → concepts → registry → scoring → bac
 poea report           Regenerate run_report.md from existing artifacts
 ```
 
+## Report Sections
+
+`poea pipeline --backend poe` produces `artifacts/run_report.md` with:
+
+| Section | Source |
+|---------|--------|
+| Run Summary | POE-A artifact counts |
+| Concept Registry | POE-A registry |
+| Evidence Scoring Summary | POE-A scorer |
+| Routing and Cost Summary | POE-A router + shadow prefilter |
+| Assignments Per Concept | POE-A scorer |
+| Sample Scorer Outputs | POE-A scorer |
+| Graph Summary | Old POE `engine.learn()` |
+| **Posterior Inference** | Old POE `engine.query()` → pgmpy VariableElimination |
+| **Variable Uncertainty Ranking** | Arithmetic over old POE posteriors |
+| **Structure Diagnostics** | Old POE `build_structure_diagnostics()` → BIC decomposition |
+| **Evidence Entropy and MI** | Old POE `build_entropy_diagnostics()` |
+| Backend Candidates | Old POE population |
+
+Bold sections surface old POE epistemic information. No new inference is computed
+in POE-A; all computation is delegated to old POE.
+
+See `POSTERIOR_SURFACE_AUDIT.md` for a complete inventory of available old POE
+outputs and `QUERY_TEMPLATE_DESIGN.md` for a framework of useful questions.
+
 ## Architecture
 
 ```

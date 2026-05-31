@@ -5,7 +5,13 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from poea.artifacts.reports import _append_posterior_inference, write_run_report
+from poea.artifacts.reports import (
+    _append_entropy_diagnostics,
+    _append_posterior_inference,
+    _append_structure_diagnostics,
+    _append_variable_uncertainty,
+    write_run_report,
+)
 from poea.cli import app
 
 
@@ -433,3 +439,213 @@ def test_report_posterior_inference_not_claimed_as_new():
     assert "old POE" in section or "Old POE" in section
     # Must not claim POE-A computes posteriors
     assert "POE-A does not compute" in section or "engine.query()" in section
+
+
+# ---------------------------------------------------------------------------
+# Variable uncertainty section
+# ---------------------------------------------------------------------------
+
+def _make_graph_with_full_diagnostics() -> dict:
+    return {
+        "backend": "poe",
+        "domain_id": "test-domain",
+        "node_count": 2,
+        "edge_count": 0,
+        "nodes": [],
+        "edges": [],
+        "candidate_summaries": [],
+        "population": {"candidate_count": 1, "active_count": 1, "dominant_log_score": -2.0},
+        "posterior_inference": {
+            "method": "old_poe_pgmpy_variable_elimination",
+            "aggregation": "population_weighted_average",
+            "posteriors": {
+                "Alpha": {"True": 0.80, "False": 0.20},
+                "Beta": {"True": 0.52, "False": 0.48},
+                "Gamma": {"True": 0.15, "False": 0.85},
+            },
+        },
+        "structure_diagnostics": {
+            "method": "old_poe_build_structure_diagnostics",
+            "env_mode": "strict",
+            "total_evidence_records": 5,
+            "candidates": [
+                {
+                    "candidate_id": "abc12345-1234-1234-1234-123456789012",
+                    "description": "poea-abductive-seed",
+                    "generation": 0,
+                    "status": "ACTIVE",
+                    "is_dominant": True,
+                    "evidence_count": 5,
+                    "log_score": -3.5,
+                    "avg_ll": -0.70,
+                    "bic_penalty_raw": 0.30,
+                    "bic_score_strict": -1.00,
+                    "bic_score_explore": -0.775,
+                    "active_edge_count": 0,
+                    "total_edge_count": 0,
+                    "edges": [],
+                },
+            ],
+        },
+        "entropy_diagnostics": {
+            "method": "old_poe_build_entropy_diagnostics",
+            "total_evidence_rows": 5,
+            "variables": {
+                "Alpha": {"observed_count": 4, "missing_count": 1, "entropy": 0.8113},
+                "Beta": {"observed_count": 3, "missing_count": 2, "entropy": 0.9183},
+            },
+            "top_mutual_information_pairs": [
+                {"variable_x": "Alpha", "variable_y": "Beta", "joint_observed_count": 3, "mutual_information": 0.1245},
+            ],
+        },
+        "metadata": {"created_at": "2026-05-30T00:00:00+00:00", "evidence_count": 5},
+    }
+
+
+def test_append_variable_uncertainty_section_header():
+    graph = _make_graph_with_full_diagnostics()
+    lines: list[str] = []
+    _append_variable_uncertainty(lines, graph)
+    section = "\n".join(lines)
+    assert "## Variable Uncertainty Ranking" in section
+
+
+def test_append_variable_uncertainty_shows_concepts():
+    graph = _make_graph_with_full_diagnostics()
+    lines: list[str] = []
+    _append_variable_uncertainty(lines, graph)
+    section = "\n".join(lines)
+    assert "Alpha" in section
+    assert "Beta" in section
+    assert "Gamma" in section
+
+
+def test_append_variable_uncertainty_sorted_by_certainty():
+    """Beta (P=0.52, uncertainty=0.02) should appear before Alpha (P=0.80, uncertainty=0.30)."""
+    graph = _make_graph_with_full_diagnostics()
+    lines: list[str] = []
+    _append_variable_uncertainty(lines, graph)
+    section = "\n".join(lines)
+    beta_pos = section.find("Beta")
+    alpha_pos = section.find("Alpha")
+    # Beta is most uncertain, should appear first
+    assert beta_pos < alpha_pos
+
+
+def test_append_variable_uncertainty_no_posteriors():
+    graph = {"backend": "poe", "posterior_inference": {}}
+    lines: list[str] = []
+    _append_variable_uncertainty(lines, graph)
+    section = "\n".join(lines)
+    assert "No posterior inference results" in section
+
+
+# ---------------------------------------------------------------------------
+# Structure diagnostics section
+# ---------------------------------------------------------------------------
+
+def test_append_structure_diagnostics_section_header():
+    graph = _make_graph_with_full_diagnostics()
+    lines: list[str] = []
+    _append_structure_diagnostics(lines, graph)
+    section = "\n".join(lines)
+    assert "## Structure Diagnostics" in section
+    assert "BIC" in section
+
+
+def test_append_structure_diagnostics_shows_method():
+    graph = _make_graph_with_full_diagnostics()
+    lines: list[str] = []
+    _append_structure_diagnostics(lines, graph)
+    section = "\n".join(lines)
+    assert "old_poe_build_structure_diagnostics" in section
+
+
+def test_append_structure_diagnostics_shows_candidate():
+    graph = _make_graph_with_full_diagnostics()
+    lines: list[str] = []
+    _append_structure_diagnostics(lines, graph)
+    section = "\n".join(lines)
+    assert "abc12345" in section
+    assert "ACTIVE" in section
+
+
+def test_append_structure_diagnostics_shows_dominant_marker():
+    graph = _make_graph_with_full_diagnostics()
+    lines: list[str] = []
+    _append_structure_diagnostics(lines, graph)
+    section = "\n".join(lines)
+    assert "★" in section
+
+
+def test_append_structure_diagnostics_no_data():
+    graph = {"backend": "poe", "structure_diagnostics": {}}
+    lines: list[str] = []
+    _append_structure_diagnostics(lines, graph)
+    section = "\n".join(lines)
+    assert "No structure diagnostics" in section
+
+
+# ---------------------------------------------------------------------------
+# Entropy diagnostics section
+# ---------------------------------------------------------------------------
+
+def test_append_entropy_diagnostics_section_header():
+    graph = _make_graph_with_full_diagnostics()
+    lines: list[str] = []
+    _append_entropy_diagnostics(lines, graph)
+    section = "\n".join(lines)
+    assert "## Evidence Entropy" in section
+
+
+def test_append_entropy_diagnostics_shows_method():
+    graph = _make_graph_with_full_diagnostics()
+    lines: list[str] = []
+    _append_entropy_diagnostics(lines, graph)
+    section = "\n".join(lines)
+    assert "old_poe_build_entropy_diagnostics" in section
+
+
+def test_append_entropy_diagnostics_shows_variable_entropy():
+    graph = _make_graph_with_full_diagnostics()
+    lines: list[str] = []
+    _append_entropy_diagnostics(lines, graph)
+    section = "\n".join(lines)
+    assert "Alpha" in section
+    assert "0.8113" in section
+
+
+def test_append_entropy_diagnostics_shows_mi_pairs():
+    graph = _make_graph_with_full_diagnostics()
+    lines: list[str] = []
+    _append_entropy_diagnostics(lines, graph)
+    section = "\n".join(lines)
+    assert "Mutual Information" in section
+    assert "Alpha" in section
+    assert "Beta" in section
+
+
+def test_append_entropy_diagnostics_no_data():
+    graph = {"backend": "poe", "entropy_diagnostics": {}}
+    lines: list[str] = []
+    _append_entropy_diagnostics(lines, graph)
+    section = "\n".join(lines)
+    assert "No entropy diagnostics" in section
+
+
+def test_full_report_includes_all_new_sections(tmp_path):
+    """Full report generation includes all three new diagnostic sections."""
+    output_dir = tmp_path / "artifacts"
+    _write_complete_artifacts(output_dir)
+    _write_json(output_dir / "poea_graph.json", _make_graph_with_full_diagnostics())
+
+    result = CliRunner().invoke(
+        app,
+        ["report", "--run", "latest", "--output-dir", str(output_dir)],
+    )
+    assert result.exit_code == 0, result.output
+    report = (output_dir / "run_report.md").read_text()
+
+    assert "## Variable Uncertainty Ranking" in report
+    assert "## Structure Diagnostics" in report
+    assert "## Evidence Entropy" in report

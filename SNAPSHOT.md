@@ -121,24 +121,48 @@ Run reports include a "Routing And Cost Summary" section.
 
 ---
 
-## Posterior Inference (Old POE) — 2026-05-30
+## Old POE Backend Outputs Now Surfaced — 2026-05-30
 
-Old POE's `engine.query()` → `InferenceService` → pgmpy `VariableElimination` is
-now called immediately after `engine.learn()` in `poe_backend.py`.
+Three categories of old POE information are now embedded in the graph artifact
+and surfaced in run reports. All computation is delegated to old POE.
 
-POE-A does not compute posterior probabilities. It passes target variable names
-to `engine.query(InferenceQuery(aggregation=WEIGHTED_AVERAGE))` and embeds the
-result in the graph artifact under `posterior_inference`.
+### Posterior Inference
 
-The run report includes a "Posterior Inference (Old POE)" section that reads from
-this artifact key and displays per-concept P(True)/P(False) alongside the dominant
-direction (active/absent/uncertain).
+`engine.query()` → `InferenceService` → pgmpy `VariableElimination` is called
+immediately after `engine.learn()`. Result embedded as `posterior_inference` in
+graph artifact.
 
-Architecture boundary remains intact:
-- POE-A: builds `InferenceQuery`, calls `engine.query()`, reads result
-- Old POE: runs pgmpy VariableElimination over learned CPTs
+Report sections: "Posterior Inference (Old POE)", "Variable Uncertainty Ranking".
 
-No probabilistic computation exists in POE-A.
+### Structure Diagnostics
+
+`build_structure_diagnostics()` from old POE's `services/structure_diagnostics.py`
+(pure function, no side effects) is called to get BIC decomposition per candidate:
+`avg_ll`, `bic_score_strict`, `bic_score_explore`, edge structure, dominance.
+Result embedded as `structure_diagnostics` in graph artifact.
+
+Report section: "Structure Diagnostics (Old POE BIC Decomposition)".
+
+### Evidence Entropy and Mutual Information
+
+`build_entropy_diagnostics()` from old POE's `services/evidence_diagnostics.py`
+(pure function, no side effects) is called on the POE EvidenceRecord objects
+to get per-variable Shannon entropy, observed counts, and pairwise MI.
+Result embedded as `entropy_diagnostics` in graph artifact.
+
+Report section: "Evidence Entropy and Mutual Information (Old POE)".
+
+### Architecture Boundary Preserved
+
+- POE-A: calls old POE functions, reads results, formats for reports
+- Old POE: performs all computation (BIC scoring, pgmpy inference, entropy/MI)
+- No probabilistic computation added to POE-A
+
+### New Documentation Files
+
+- `POSTERIOR_SURFACE_AUDIT.md` — full audit of what old POE computes vs. what POE-A surfaces
+- `QUERY_TEMPLATE_DESIGN.md` — query template framework for useful post-learning questions
+- `COST_REVIEW.md` — cost review: no new Fireworks calls; all new diagnostics are CPU-only
 
 ---
 
@@ -280,7 +304,7 @@ Domain ID used: `poea-induced-v1` (configurable via `configs/induction_config.ya
 ## Test Suite
 
 ```
-329 passed, 1 skipped
+359 passed, 1 skipped
 ```
 
 Tests added:
@@ -295,7 +319,8 @@ Tests added:
   - `test_run_posterior_query_returns_empty_for_no_variables`
   - `test_build_graph_artifact_embeds_posterior_inference`
   - `test_poe_backend_score_hypotheses_includes_posterior_inference`
-- `tests/test_reports.py` — extended with 10 new posterior inference report tests
+- `tests/test_reports.py` — extended with 10 posterior inference tests + 20 new diagnostic section tests
+- `tests/test_poe_adapter.py` — extended with structure/entropy diagnostic and edge label tests
 
 25 new tests added in `tests/test_semantic_optimization.py` covering:
 - Compact prompt output schema preservation
