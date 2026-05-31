@@ -14,8 +14,10 @@ from poea.backends.poe_backend import (
     InducedDomainModule,
     POEBackend,
     _build_cooccurrence_edges,
+    _build_graph_artifact,
     _build_variables,
     _import_poe,
+    _run_posterior_query,
     _translate_scored_evidence,
 )
 
@@ -422,6 +424,147 @@ def test_poe_backend_score_hypotheses():
     assert result["backend"] == "poe"
     assert "hypotheses" in result
     assert "population" in result
+
+
+def test_poe_backend_score_hypotheses_includes_posterior_inference():
+    """score_hypotheses must pass through posterior_inference from graph artifact."""
+    concepts = [_make_concept("Alpha"), _make_concept("Beta")]
+    backend = POEBackend(db_path=":memory:", random_seed=42)
+    scored = [
+        _make_scored_record("ev001", [
+            _make_assignment("Alpha", True, "OBSERVED", 0.9),
+            _make_assignment("Beta", False, "OBSERVED", 0.8),
+        ]),
+    ]
+    graph = backend.learn_graph(concepts, scored)
+    result = backend.score_hypotheses(graph, scored)
+    assert "posterior_inference" in result
+
+
+# ---------------------------------------------------------------------------
+# Posterior inference (Task 1: expose old POE engine.query())
+# ---------------------------------------------------------------------------
+
+def test_graph_artifact_contains_posterior_inference_key():
+    """Graph artifact always has posterior_inference key after learn_graph."""
+    concepts = [_make_concept("Alpha"), _make_concept("Beta")]
+    backend = POEBackend(db_path=":memory:", random_seed=42)
+    graph = backend.learn_graph(concepts, [])
+    assert "posterior_inference" in graph
+
+
+def test_posterior_inference_present_with_evidence():
+    """Posterior inference is populated when evidence is provided to learn_graph."""
+    concepts = [_make_concept("Alpha"), _make_concept("Beta")]
+    scored = [
+        _make_scored_record("ev001", [
+            _make_assignment("Alpha", True, "OBSERVED", 0.9),
+            _make_assignment("Beta", True, "OBSERVED", 0.8),
+        ]),
+        _make_scored_record("ev002", [
+            _make_assignment("Alpha", False, "OBSERVED", 0.85),
+            _make_assignment("Beta", True, "OBSERVED", 0.75),
+        ]),
+    ]
+    backend = POEBackend(db_path=":memory:", random_seed=42)
+    graph = backend.learn_graph(concepts, scored)
+
+    inference = graph["posterior_inference"]
+    assert isinstance(inference, dict)
+    assert "posteriors" in inference
+    posteriors = inference["posteriors"]
+    assert "Alpha" in posteriors
+    assert "Beta" in posteriors
+
+
+def test_posterior_inference_delegates_to_old_poe_engine():
+    """
+    Verify posterior inference is computed by old POE engine.query(),
+    not by any POE-A internal logic.
+
+    We check that the method field is set to 'old_poe_pgmpy_variable_elimination',
+    which _run_posterior_query() sets only when engine.query() succeeds.
+    """
+    concepts = [_make_concept("Alpha"), _make_concept("Beta")]
+    scored = [
+        _make_scored_record("ev001", [
+            _make_assignment("Alpha", True, "OBSERVED", 0.9),
+            _make_assignment("Beta", False, "OBSERVED", 0.8),
+        ]),
+    ]
+    backend = POEBackend(db_path=":memory:", random_seed=42)
+    graph = backend.learn_graph(concepts, scored)
+
+    inference = graph.get("posterior_inference", {})
+    # method is only set when old POE engine.query() returns successfully
+    assert inference.get("method") == "old_poe_pgmpy_variable_elimination"
+    assert inference.get("aggregation") == "population_weighted_average"
+
+
+def test_posterior_probabilities_sum_to_one():
+    """Each variable's posterior distribution must sum to 1.0 (pgmpy guarantee)."""
+    concepts = [_make_concept("Alpha"), _make_concept("Beta")]
+    scored = [
+        _make_scored_record("ev001", [
+            _make_assignment("Alpha", True, "OBSERVED", 0.9),
+            _make_assignment("Beta", True, "OBSERVED", 0.8),
+        ]),
+    ]
+    backend = POEBackend(db_path=":memory:", random_seed=42)
+    graph = backend.learn_graph(concepts, scored)
+
+    posteriors = graph.get("posterior_inference", {}).get("posteriors", {})
+    for name, dist in posteriors.items():
+        total = sum(float(v) for v in dist.values())
+        assert abs(total - 1.0) < 0.02, f"{name}: probabilities sum to {total:.4f}"
+
+
+def test_posterior_inference_variable_names_match_concepts():
+    """Posterior inference keys must match the concept names passed in."""
+    concepts = [_make_concept("ConceptX"), _make_concept("ConceptY")]
+    scored = [
+        _make_scored_record("ev001", [
+            _make_assignment("ConceptX", True, "OBSERVED", 0.9),
+            _make_assignment("ConceptY", False, "OBSERVED", 0.8),
+        ]),
+    ]
+    backend = POEBackend(db_path=":memory:", random_seed=42)
+    graph = backend.learn_graph(concepts, scored)
+
+    posteriors = graph.get("posterior_inference", {}).get("posteriors", {})
+    for c in concepts:
+        assert c["name"] in posteriors, f"Missing posterior for concept {c['name']!r}"
+
+
+def test_run_posterior_query_returns_empty_for_no_variables():
+    """_run_posterior_query returns empty dict when variable list is empty."""
+    from src.engine.engine import ProbabilisticOntologyEngine
+    engine = ProbabilisticOntologyEngine(db_path=":memory:")
+    result = _run_posterior_query(engine, [], "test-domain")
+    assert result == {}
+
+
+def test_build_graph_artifact_embeds_posterior_inference():
+    """_build_graph_artifact correctly stores posterior_inference in output dict."""
+    (_, Variable, _, OntologyCandidate, _, _, DomainType, _, _, EdgeExistenceThresholdConfig, stable_variable_id) = _import_poe()
+    from src.engine.schemas import OntologyPopulation
+
+    concepts = [_make_concept("Alpha")]
+    variables = _build_variables(concepts, "test", Variable, DomainType, stable_variable_id)
+    candidate = OntologyCandidate(domain_module_id="test", variables=variables, edges=[])
+
+    pop = OntologyPopulation(domain_module_id="test", candidates=[candidate])
+
+    fake_posteriors = {"method": "old_poe_pgmpy_variable_elimination", "posteriors": {"Alpha": {"True": 0.6, "False": 0.4}}}
+    artifact = _build_graph_artifact(
+        population=pop,
+        fallback_variables=variables,
+        domain_id="test",
+        evidence_count=0,
+        snapshot=None,
+        posterior_inference=fake_posteriors,
+    )
+    assert artifact["posterior_inference"] == fake_posteriors
 
 
 # ---------------------------------------------------------------------------

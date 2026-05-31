@@ -111,6 +111,7 @@ def write_run_report(
     _append_concept_scoring_table(lines, registry, scored, diagnostics)
     _append_sample_scorer_outputs(lines, evidence, scored)
     _append_graph_summary(lines, graph, inferred_backend)
+    _append_posterior_inference(lines, graph)
     _append_backend_candidates(lines, graph)
     _append_warnings(lines, all_warnings)
     _append_timestamps(lines, raw_concepts, registry, canonical, scored, nodes, graph)
@@ -422,6 +423,75 @@ def _append_graph_summary(lines: list[str], graph: Any, backend: str) -> None:
                     probability=_format_float(probability),
                 )
             )
+        lines.append("")
+
+
+def _append_posterior_inference(lines: list[str], graph: Any) -> None:
+    """
+    Append old POE posterior inference results to the report.
+
+    Posterior inference is computed entirely by old POE's engine.query()
+    via pgmpy VariableElimination.  POE-A does not compute probabilities here;
+    it only reads and formats what old POE returned.
+    """
+    lines.append("## Posterior Inference (Old POE — pgmpy VariableElimination)")
+    lines.append("")
+    if not isinstance(graph, dict):
+        lines.append("- Graph artifact not present; no inference results.")
+        lines.append("")
+        return
+
+    inference = graph.get("posterior_inference", {})
+    if not isinstance(inference, dict) or not inference:
+        lines.append("- No posterior inference results in graph artifact.")
+        lines.append("  (Run with `--backend poe` to produce inference results.)")
+        lines.append("")
+        return
+
+    if "error" in inference:
+        lines.append(f"- Old POE inference error: `{inference['error']}`")
+        lines.append("")
+        return
+
+    method = inference.get("method", "unknown")
+    aggregation = inference.get("aggregation", "unknown")
+    lines.append(f"- Method: `{method}`")
+    lines.append(f"- Aggregation: `{aggregation}`")
+    lines.append("- Source: old POE `engine.query()` → `InferenceService` → pgmpy `VariableElimination`")
+    lines.append("")
+
+    posteriors = inference.get("posteriors", {})
+    if not posteriors:
+        lines.append("- No posteriors returned (no active candidates or empty population).")
+        lines.append("")
+        return
+
+    lines.append("| Concept | P(True) | P(False) | Dominant direction |")
+    lines.append("| --- | ---: | ---: | --- |")
+    for name in sorted(posteriors):
+        dist = posteriors[name]
+        p_true = float(dist.get("True", dist.get("true", 0.5)))
+        p_false = float(dist.get("False", dist.get("false", 0.5)))
+        if p_true > p_false + 0.05:
+            direction = "active"
+        elif p_false > p_true + 0.05:
+            direction = "absent"
+        else:
+            direction = "uncertain"
+        lines.append(
+            f"| {_escape(name)} | {p_true:.4f} | {p_false:.4f} | {direction} |"
+        )
+    lines.append("")
+
+    pop_summary = inference.get("population_summary", {})
+    if pop_summary:
+        lines.append("### Population Summary (Old POE)")
+        lines.append("")
+        lines.append(f"- Active candidates: {pop_summary.get('active_candidates', 'n/a')}")
+        lines.append(f"- Dominant candidate: `{pop_summary.get('dominant_candidate', 'n/a')}`")
+        lines.append(f"- Dominant log-score: {_format_float(pop_summary.get('dominant_score', 0.0))}")
+        lines.append(f"- Structure entropy: {_format_float(pop_summary.get('structure_entropy', 0.0))}")
+        lines.append(f"- Paradigm shift count: {pop_summary.get('paradigm_shift_count', 0)}")
         lines.append("")
 
 

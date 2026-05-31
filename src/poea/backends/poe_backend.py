@@ -244,6 +244,9 @@ class POEBackend:
                 self._domain_id,
             )
 
+        # 6b. Run old POE posterior inference (delegates entirely to engine.query())
+        posterior_inference = _run_posterior_query(engine, variables, self._domain_id)
+
         # 7. Extract graph artifact
         population = engine.get_population(self._domain_id)
         return _build_graph_artifact(
@@ -252,6 +255,7 @@ class POEBackend:
             domain_id=self._domain_id,
             evidence_count=len(records),
             snapshot=snapshot,
+            posterior_inference=posterior_inference,
         )
 
     def score_hypotheses(
@@ -261,16 +265,19 @@ class POEBackend:
         config: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]:
         """
-        Return candidate hypothesis scores from the graph artifact.
+        Return candidate hypothesis scores and posterior inference from the graph artifact.
 
-        For Phase 9, hypothesis scoring reads from the pre-computed candidate
-        summaries embedded in the graph artifact by learn_graph.
+        Reads pre-computed candidate summaries and posterior_inference embedded in
+        the graph artifact by learn_graph.  Posterior inference was computed by
+        old POE's engine.query() → InferenceService → pgmpy VariableElimination.
+        POE-A does not recompute or independently implement posterior inference.
         """
         return {
             "backend": self.BACKEND_NAME,
             "hypothesis_count": len(graph.get("candidate_summaries", [])),
             "hypotheses": graph.get("candidate_summaries", []),
             "population": graph.get("population", {}),
+            "posterior_inference": graph.get("posterior_inference", {}),
         }
 
 
@@ -412,12 +419,63 @@ def _translate_scored_evidence(
     return records
 
 
+def _run_posterior_query(engine: Any, variables: list, domain_id: str) -> dict[str, Any]:
+    """
+    Run old POE posterior inference immediately after learning.
+
+    Delegates entirely to engine.query() → InferenceService → pgmpy
+    VariableElimination.  POE-A performs no probability calculations here;
+    this is a thin adapter that formats the request and passes it through.
+
+    Returns an empty dict if inference is unavailable or fails.
+    """
+    variable_names = [v.name for v in variables]
+    if not variable_names:
+        return {}
+
+    try:
+        from src.engine.schemas import (
+            InferenceQuery,
+            PopulationAggregation,
+            QueryType,
+        )
+    except ImportError:
+        logger.warning("Old POE inference schemas not importable; skipping posterior query")
+        return {}
+
+    query = InferenceQuery(
+        domain_module_id=domain_id,
+        target_variables=variable_names,
+        query_type=QueryType.MARGINAL,
+        population_aggregation=PopulationAggregation.WEIGHTED_AVERAGE,
+    )
+
+    try:
+        result = engine.query(query)
+        posteriors = result.get("posteriors", {})
+        logger.info(
+            "Old POE posterior inference complete — %d variable(s), domain '%s'",
+            len(posteriors),
+            domain_id,
+        )
+        return {
+            "method": "old_poe_pgmpy_variable_elimination",
+            "aggregation": "population_weighted_average",
+            "posteriors": posteriors,
+            "population_summary": result.get("population_summary", {}),
+        }
+    except Exception as exc:
+        logger.warning("Old POE posterior inference failed: %s", exc)
+        return {"error": str(exc)}
+
+
 def _build_graph_artifact(
     population: Any,
     fallback_variables: list,
     domain_id: str,
     evidence_count: int,
     snapshot: Any,
+    posterior_inference: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Extract a POE-A graph artifact from a POE OntologyPopulation.
@@ -490,6 +548,7 @@ def _build_graph_artifact(
             "active_count": len(active),
             "dominant_log_score": max((c.log_score for c in active), default=0.0),
         },
+        "posterior_inference": posterior_inference or {},
         "metadata": {
             "created_at": now,
             "evidence_count": evidence_count,

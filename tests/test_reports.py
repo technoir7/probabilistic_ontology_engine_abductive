@@ -5,7 +5,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from poea.artifacts.reports import write_run_report
+from poea.artifacts.reports import _append_posterior_inference, write_run_report
 from poea.cli import app
 
 
@@ -295,3 +295,141 @@ def test_report_sample_scorer_output_rendering(tmp_path):
     assert "## Sample Scorer Outputs" in report
     assert "Alpha=true (0.90, OBSERVED)" in report
     assert "Beta=false (0.40, SOFT_OBSERVED)" in report
+
+
+# ---------------------------------------------------------------------------
+# Posterior inference section (Task 1: expose old POE engine.query())
+# ---------------------------------------------------------------------------
+
+def _make_graph_with_posteriors() -> dict:
+    return {
+        "backend": "poe",
+        "domain_id": "test-domain",
+        "node_count": 2,
+        "edge_count": 0,
+        "nodes": [],
+        "edges": [],
+        "candidate_summaries": [],
+        "population": {"candidate_count": 1, "active_count": 1, "dominant_log_score": -2.0},
+        "posterior_inference": {
+            "method": "old_poe_pgmpy_variable_elimination",
+            "aggregation": "population_weighted_average",
+            "posteriors": {
+                "Alpha": {"True": 0.72, "False": 0.28},
+                "Beta": {"True": 0.35, "False": 0.65},
+            },
+            "population_summary": {
+                "active_candidates": 1,
+                "dominant_candidate": "abc12345",
+                "dominant_score": -2.0,
+                "structure_entropy": 0.0,
+                "paradigm_shift_count": 0,
+            },
+        },
+        "metadata": {"created_at": "2026-05-30T00:00:00+00:00", "evidence_count": 2},
+    }
+
+
+def test_append_posterior_inference_section_header():
+    graph = _make_graph_with_posteriors()
+    lines: list[str] = []
+    _append_posterior_inference(lines, graph)
+    section = "\n".join(lines)
+    assert "## Posterior Inference" in section
+    assert "pgmpy" in section.lower() or "VariableElimination" in section
+
+
+def test_append_posterior_inference_shows_method():
+    graph = _make_graph_with_posteriors()
+    lines: list[str] = []
+    _append_posterior_inference(lines, graph)
+    section = "\n".join(lines)
+    assert "old_poe_pgmpy_variable_elimination" in section
+
+
+def test_append_posterior_inference_shows_variable_posteriors():
+    graph = _make_graph_with_posteriors()
+    lines: list[str] = []
+    _append_posterior_inference(lines, graph)
+    section = "\n".join(lines)
+    assert "Alpha" in section
+    assert "Beta" in section
+    assert "0.7200" in section
+    assert "0.3500" in section
+
+
+def test_append_posterior_inference_shows_dominant_direction():
+    """Alpha has P(True)=0.72 > P(False)=0.28 → should show 'active'."""
+    graph = _make_graph_with_posteriors()
+    lines: list[str] = []
+    _append_posterior_inference(lines, graph)
+    section = "\n".join(lines)
+    assert "active" in section   # Alpha: P(True)=0.72 → active
+    assert "absent" in section   # Beta: P(False)=0.65 → absent
+
+
+def test_append_posterior_inference_shows_population_summary():
+    graph = _make_graph_with_posteriors()
+    lines: list[str] = []
+    _append_posterior_inference(lines, graph)
+    section = "\n".join(lines)
+    assert "Population Summary" in section
+    assert "abc12345" in section
+
+
+def test_append_posterior_inference_no_graph():
+    lines: list[str] = []
+    _append_posterior_inference(lines, None)
+    section = "\n".join(lines)
+    assert "not present" in section
+
+
+def test_append_posterior_inference_missing_inference_key():
+    graph = {"backend": "poe", "node_count": 1}
+    lines: list[str] = []
+    _append_posterior_inference(lines, graph)
+    section = "\n".join(lines)
+    assert "No posterior inference results" in section
+
+
+def test_append_posterior_inference_error_key():
+    graph = {
+        "backend": "poe",
+        "posterior_inference": {"error": "pgmpy model check failed"},
+    }
+    lines: list[str] = []
+    _append_posterior_inference(lines, graph)
+    section = "\n".join(lines)
+    assert "pgmpy model check failed" in section
+
+
+def test_report_includes_posterior_inference_section_from_graph(tmp_path):
+    """Full report generation includes posterior inference when graph has it."""
+    output_dir = tmp_path / "artifacts"
+    _write_complete_artifacts(output_dir)
+
+    # Overwrite graph with posteriors
+    _write_json(output_dir / "poea_graph.json", _make_graph_with_posteriors())
+
+    result = CliRunner().invoke(
+        app,
+        ["report", "--run", "latest", "--output-dir", str(output_dir)],
+    )
+    assert result.exit_code == 0, result.output
+    report = (output_dir / "run_report.md").read_text()
+    assert "## Posterior Inference" in report
+    assert "old_poe_pgmpy_variable_elimination" in report
+    assert "Alpha" in report
+    assert "0.7200" in report
+
+
+def test_report_posterior_inference_not_claimed_as_new():
+    """The posterior inference section must attribute results to old POE, not POE-A."""
+    graph = _make_graph_with_posteriors()
+    lines: list[str] = []
+    _append_posterior_inference(lines, graph)
+    section = "\n".join(lines)
+    # Must clearly attribute to old POE
+    assert "old POE" in section or "Old POE" in section
+    # Must not claim POE-A computes posteriors
+    assert "POE-A does not compute" in section or "engine.query()" in section

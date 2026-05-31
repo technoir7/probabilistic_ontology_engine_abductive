@@ -121,6 +121,27 @@ Run reports include a "Routing And Cost Summary" section.
 
 ---
 
+## Posterior Inference (Old POE) — 2026-05-30
+
+Old POE's `engine.query()` → `InferenceService` → pgmpy `VariableElimination` is
+now called immediately after `engine.learn()` in `poe_backend.py`.
+
+POE-A does not compute posterior probabilities. It passes target variable names
+to `engine.query(InferenceQuery(aggregation=WEIGHTED_AVERAGE))` and embeds the
+result in the graph artifact under `posterior_inference`.
+
+The run report includes a "Posterior Inference (Old POE)" section that reads from
+this artifact key and displays per-concept P(True)/P(False) alongside the dominant
+direction (active/absent/uncertain).
+
+Architecture boundary remains intact:
+- POE-A: builds `InferenceQuery`, calls `engine.query()`, reads result
+- Old POE: runs pgmpy VariableElimination over learned CPTs
+
+No probabilistic computation exists in POE-A.
+
+---
+
 ## Current Art Domain Registry
 
 Induction run on art-market-domain evidence.
@@ -259,8 +280,22 @@ Domain ID used: `poea-induced-v1` (configurable via `configs/induction_config.ya
 ## Test Suite
 
 ```
-281 passed, 1 skipped
+329 passed, 1 skipped
 ```
+
+Tests added:
+- `tests/test_semantic_optimization.py` — 25 tests for prompt compaction, shadow prefilter, cache, routing metrics (added earlier)
+- `tests/test_prefilter_eval.py` — 30 tests for shadow prefilter evaluator
+- `tests/test_poe_adapter.py` — extended with 9 new posterior inference tests:
+  - `test_graph_artifact_contains_posterior_inference_key`
+  - `test_posterior_inference_present_with_evidence`
+  - `test_posterior_inference_delegates_to_old_poe_engine`
+  - `test_posterior_probabilities_sum_to_one`
+  - `test_posterior_inference_variable_names_match_concepts`
+  - `test_run_posterior_query_returns_empty_for_no_variables`
+  - `test_build_graph_artifact_embeds_posterior_inference`
+  - `test_poe_backend_score_hypotheses_includes_posterior_inference`
+- `tests/test_reports.py` — extended with 10 new posterior inference report tests
 
 25 new tests added in `tests/test_semantic_optimization.py` covering:
 - Compact prompt output schema preservation
